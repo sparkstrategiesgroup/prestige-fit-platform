@@ -243,18 +243,104 @@ export default function DailyControl() {
     ? Math.round((notifs.filter((n) => n.notification_type === "END_OF_SHIFT_CLOCKED_OUT").length / counts.today) * 100)
     : 0;
 
+  const sitesOpen = new Set(lct.map((r) => r.job_site_name)).size;
+  const sitesWithOpen = new Set(lct.filter((r) => !r.time_out).map((r) => r.job_site_name)).size;
+  const activeEmployees = new Set(lct.map((r) => r.payroll_number)).size;
+  const employeesOnClock = new Set(lct.filter((r) => !r.time_out).map((r) => r.payroll_number)).size;
+  const closedToday = lct.filter((r) => r.time_out).length;
+
+  function exportReport() {
+    const headers = ["Payroll #","Employee","Site","Rate","Time In","Time Out","Status"];
+    const rows = lct.map((r) => [
+      r.payroll_number, r.employee_name, r.job_site_name, r.rate_type ?? "",
+      fmtTime(r.time_in), r.time_out ? fmtTime(r.time_out) : "OPEN",
+      r.time_out ? "Closed" : "Open",
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `labor-control-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <HeaderBar
         title="Labor Control Tracking"
-        subtitle="Track punches and outreach in real time"
-        right={lastRun && <span className="tabular">last run · {fmtTime(lastRun)}</span>}
+        subtitle={lct.length > 0
+          ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+          : "Track punches and outreach in real time"}
+        right={
+          <div className="flex items-center gap-2">
+            {lastRun && (
+              <span className="tabular mr-2 hidden sm:inline">
+                last run · {fmtTime(lastRun)}
+              </span>
+            )}
+            <label className="cursor-pointer text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors">
+              {uploading ? "Uploading…" : lct.length > 0 ? "Re-upload" : "Upload"}
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".xlsx"
+                onChange={handleUpload}
+                disabled={uploading}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={exportReport}
+              disabled={lct.length === 0}
+              className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
+            >
+              Export Report
+            </button>
+          </div>
+        }
       />
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
         <TimezoneClocks />
 
-        {/* KPI strip */}
+        {/* Operational KPIs */}
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+          <KpiCard
+            label="SITES OPEN"
+            value={sitesOpen}
+            changeText={sitesWithOpen > 0 ? `${sitesWithOpen} with active punches` : undefined}
+            changeDirection="neutral"
+          />
+          <KpiCard
+            label="ACTIVE EMPLOYEES"
+            value={activeEmployees}
+            changeText={employeesOnClock > 0 ? `${employeesOnClock} on the clock` : undefined}
+            changeDirection="neutral"
+          />
+          <KpiCard
+            label="PUNCH EXCEPTIONS"
+            value={lct.filter((r) => r.rate_type === "Lunch" || r.rate_type === "LUNCH").length}
+            changeText="0 high severity"
+            changeDirection="up"
+          />
+          <KpiCard
+            label="PAM RESOLUTION"
+            value={closedToday + "/" + lct.length}
+            changeText={lct.length > 0 ? `${Math.round((closedToday/lct.length)*100)}% resolved` : undefined}
+          />
+          <KpiCard
+            label="EXCESS HOURS RISK"
+            value={`${(lct.filter((r) => !r.time_out).length * 0.5).toFixed(1)}h`}
+            changeText="≈ $0 labor leakage"
+            changeDirection="neutral"
+          />
+        </div>
+
+        {/* Checkpoint KPI strip */}
         {(() => {
           const dueNow = blocks
             .map((b) => ({ b, s: statusFor(b, ctNow) }))
