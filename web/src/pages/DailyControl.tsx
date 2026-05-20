@@ -92,6 +92,7 @@ export default function DailyControl() {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
+  const [chainFilter, setChainFilter] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -222,6 +223,20 @@ export default function DailyControl() {
     }
   }
 
+  // Open-punch count per shift block, mapped via labor_control_tracking.
+  // Used to size the badge on each checkpoint tile.
+  const openByBlock: Record<number, number> = {};
+  for (const r of lct) {
+    if (!r.time_out && r.shift_block_id) {
+      openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+    }
+  }
+  // Chain options for the filter row (only show chains that have a tile).
+  const allChains = Array.from(new Set(blocks.flatMap((b) => b.clients))).sort();
+  const visibleBlocks = chainFilter
+    ? blocks.filter((b) => b.clients.includes(chainFilter))
+    : blocks;
+
   const missing = lct.filter((r) => !r.time_out).length;
   const resolved = lct.filter((r) => r.time_out).length;
   const responseRate = counts.today > 0
@@ -240,8 +255,32 @@ export default function DailyControl() {
         <TimezoneClocks />
 
         {/* KPI strip */}
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
-          <KpiCard label="ACTIVE CHECKPOINT" value={blocks[0]?.label ?? "—"} />
+        {(() => {
+          const dueNow = blocks
+            .map((b) => ({ b, s: statusFor(b, ctNow) }))
+            .find((x) => x.s.status === "due");
+          const nextUp = blocks
+            .map((b) => ({ b, s: statusFor(b, ctNow) }))
+            .filter((x) => x.s.status === "upcoming" || x.s.status === "future")
+            .sort((a, z) => a.s.minsAway - z.s.minsAway)[0];
+          const activeLabel = dueNow
+            ? dueNow.b.label
+            : nextUp
+              ? nextUp.b.label
+              : "—";
+          const activeChange = dueNow
+            ? "DUE NOW"
+            : nextUp
+              ? `in ${nextUp.s.minsAway} min`
+              : "no checkpoints left today";
+          return (
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+              <KpiCard
+                label="ACTIVE CHECKPOINT"
+                value={activeLabel}
+                changeText={activeChange}
+                changeDirection={dueNow ? "down" : "neutral"}
+              />
           <KpiCard
             label="PUNCHES RESOLVED"
             value={resolved}
@@ -265,7 +304,9 @@ export default function DailyControl() {
             progressPct={responseRate}
             progressTargetPct={85}
           />
-        </div>
+            </div>
+          );
+        })()}
 
         {/* Upload Punches Report */}
         <section className="bg-surface border border-border rounded-xl p-5">
@@ -292,14 +333,50 @@ export default function DailyControl() {
             </label>
           </div>
           {uploadStatus && (
-            <div className="mt-3 text-[13px] text-text-secondary tabular">
-              {uploadStatus}
+            <div className="mt-3 text-[13px] text-text-secondary tabular flex items-center gap-3 flex-wrap">
+              <span>{uploadStatus}</span>
+              <a
+                href="#todays-punches"
+                className="text-blue-1 hover:underline font-semibold"
+              >
+                View imported punches ↓
+              </a>
             </div>
           )}
         </section>
 
         {/* Checkpoint grid with real-time highlight */}
         <section className="bg-surface border border-border rounded-xl p-5">
+          {/* Client filter chips */}
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mr-1">
+              Client
+            </span>
+            <button
+              onClick={() => setChainFilter(null)}
+              className={`text-[12px] px-3 py-1 rounded-full border ${
+                chainFilter === null
+                  ? "bg-blue-1 text-white border-blue-1"
+                  : "bg-bg text-text-secondary border-border hover:border-blue-1"
+              }`}
+            >
+              All
+            </button>
+            {allChains.map((c) => (
+              <button
+                key={c}
+                onClick={() => setChainFilter(c === chainFilter ? null : c)}
+                className={`text-[12px] px-3 py-1 rounded-full border ${
+                  chainFilter === c
+                    ? "bg-blue-1 text-white border-blue-1"
+                    : "bg-bg text-text-secondary border-border hover:border-blue-1"
+                }`}
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+
           <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
             <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
               Today's checkpoints
@@ -334,8 +411,9 @@ export default function DailyControl() {
             })()}
           </div>
           <ul className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
-            {blocks.map((b) => {
+            {visibleBlocks.map((b) => {
               const { status, minsAway } = statusFor(b, ctNow);
+              const openCount = openByBlock[b.id] ?? 0;
               const styles: Record<BlockStatus, string> = {
                 due:      "bg-critical/10 border-critical ring-2 ring-critical/40 live-pulse",
                 upcoming: "bg-blue-3 border-blue-1",
@@ -369,8 +447,10 @@ export default function DailyControl() {
                         {badge[status]}
                       </div>
                     </div>
-                    <div className="text-[11px] text-text-muted mt-0.5">
-                      {b.clients.join(" · ")}
+                    <div className="text-[12px] text-text-secondary mt-0.5 tabular">
+                      {openCount === 0
+                        ? "no open punches"
+                        : `${openCount} open punch${openCount === 1 ? "" : "es"}`}
                     </div>
                     <div className="text-[11px] text-blue-1 mt-1">
                       {running === b.id ? "Sending…" : "Run this checkpoint →"}
@@ -382,53 +462,78 @@ export default function DailyControl() {
           </ul>
         </section>
 
-        {/* Today's punches */}
-        <section className="bg-surface border border-border rounded-xl p-5">
-          <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-3">
-            Today's punches ({lct.length})
-          </h2>
-          {lct.length === 0 ? (
-            <p className="text-text-muted text-sm py-4">
-              No labor_control_tracking rows for today. Upload a Punches Report
-              above to populate.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                    <th className="py-2 pr-3 font-medium">Payroll #</th>
-                    <th className="py-2 pr-3 font-medium">Employee</th>
-                    <th className="py-2 pr-3 font-medium">Site</th>
-                    <th className="py-2 pr-3 font-medium">Rate</th>
-                    <th className="py-2 pr-3 font-medium">In</th>
-                    <th className="py-2 pr-3 font-medium">Out</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {lct.map((r) => (
-                    <tr
-                      key={`${r.payroll_number}-${r.time_in}`}
-                      className={!r.time_out ? "bg-warning/5" : ""}
-                    >
-                      <td className="py-2 pr-3 tabular">{r.payroll_number}</td>
-                      <td className="py-2 pr-3">{r.employee_name}</td>
-                      <td className="py-2 pr-3">{r.job_site_name}</td>
-                      <td className="py-2 pr-3 text-text-muted">{r.rate_type ?? "—"}</td>
-                      <td className="py-2 pr-3 tabular">{fmtTime(r.time_in)}</td>
-                      <td className="py-2 pr-3 tabular">
-                        {r.time_out ? (
-                          fmtTime(r.time_out)
-                        ) : (
-                          <span className="text-warning font-semibold">OPEN</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {/* Today's punches — driven by the upload above */}
+        <section id="todays-punches" className="bg-surface border border-border rounded-xl p-5">
+          {(() => {
+            const filtered = chainFilter
+              ? lct.filter((r) => {
+                  const code = r.job_site_name.split(" ")[0]?.toUpperCase() ?? "";
+                  // Match by name prefix as a heuristic until we join to site.chain
+                  if (chainFilter === "TARGET")    return code === "TARGET";
+                  if (chainFilter === "KOHLS")     return code.startsWith("KOHL");
+                  if (chainFilter === "HARDLINES") return code === "HOME";
+                  return true;
+                })
+              : lct;
+            return (
+              <>
+                <div className="flex items-baseline justify-between flex-wrap gap-2 mb-3">
+                  <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                    Today's punches ({filtered.length}
+                    {chainFilter && lct.length !== filtered.length ? ` of ${lct.length}` : ""})
+                  </h2>
+                  {chainFilter && (
+                    <span className="text-[12px] text-text-muted">
+                      Filtered by <strong>{chainFilter}</strong> · click "All" above to clear
+                    </span>
+                  )}
+                </div>
+                {filtered.length === 0 ? (
+                  <p className="text-text-muted text-sm py-4">
+                    {lct.length === 0
+                      ? "No labor_control_tracking rows for today. Drop a Punches Report in the upload zone above — rows will appear here grouped by site."
+                      : `No punches matching ${chainFilter}.`}
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
+                          <th className="py-2 pr-3 font-medium">Payroll #</th>
+                          <th className="py-2 pr-3 font-medium">Employee</th>
+                          <th className="py-2 pr-3 font-medium">Site</th>
+                          <th className="py-2 pr-3 font-medium">Rate</th>
+                          <th className="py-2 pr-3 font-medium">In</th>
+                          <th className="py-2 pr-3 font-medium">Out</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map((r) => (
+                          <tr
+                            key={`${r.payroll_number}-${r.time_in}`}
+                            className={!r.time_out ? "bg-warning/5" : ""}
+                          >
+                            <td className="py-2 pr-3 tabular">{r.payroll_number}</td>
+                            <td className="py-2 pr-3">{r.employee_name}</td>
+                            <td className="py-2 pr-3">{r.job_site_name}</td>
+                            <td className="py-2 pr-3 text-text-muted">{r.rate_type ?? "—"}</td>
+                            <td className="py-2 pr-3 tabular">{fmtTime(r.time_in)}</td>
+                            <td className="py-2 pr-3 tabular">
+                              {r.time_out ? (
+                                fmtTime(r.time_out)
+                              ) : (
+                                <span className="text-warning font-semibold">OPEN</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
 
         {/* Notifications */}
