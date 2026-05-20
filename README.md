@@ -19,8 +19,9 @@ prestige-fit-platform/
 |-------|---------|
 | `regions` | Geographic operating zones (1000-series TX, 2000 MO/KS, etc.) |
 | `departments` | PAM notification groups with Outlook distribution lists |
-| `employees` | Central employee records, linked to Supabase Auth |
-| `job_sites` | Customer locations with IVR phone and geofence data |
+| `employee` | Central employee records, linked to Supabase Auth |
+| `site` | Customer locations with IVR phone and geofence data |
+| `schedule_slot` | One scheduled shift slot per (site, day, role, start) — addendum §2.3 |
 | `punches` | Individual clock-in/out events (IVR, Epay App, Manual) |
 | `hours_log` | Daily aggregated hours by employee/site/task (primary reporting table) |
 | `punch_exceptions` | PAM-detected missing/flagged punches |

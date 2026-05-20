@@ -9,12 +9,12 @@
 // Behavior:
 //   1. Parse the xlsx (sheet "PunchesReport", header on row 5).
 //   2. For each data row:
-//        - Resolve job_sites.id from job_sites.epay_site_code = row['Job/Site ID'].
+//        - Resolve site.id from site.epay_site_code = row['Job/Site ID'].
 //        - Upsert into labor_control_tracking keyed by
 //          (payroll_number, job_site_id, work_date, time_in).
 //        - Join job_site_schedules to fill per_schedule_out / per_schedule_hours /
 //          people_per_shift / shift_block_id.
-//        - Inherit time_zone from job_sites.
+//        - Inherit time_zone from site.
 //   3. Record the run in epay_imports.
 //
 // Returns: { import_id, imported, skipped, errors: [...] }
@@ -50,7 +50,7 @@ function parseEpayDateTime(raw: unknown): string | null {
   const [, mm, dd, yyyy, hh, mi] = m;
   // We store TIMESTAMPTZ; treat naive Epay times as the site's local time later.
   // For now, build a Z-suffixed string in the row's local wall clock; the
-  // shift-block-runner re-interprets it via job_sites.time_zone.
+  // shift-block-runner re-interprets it via site.time_zone.
   return `${yyyy}-${mm}-${dd}T${hh ?? "00"}:${mi ?? "00"}:00Z`;
 }
 
@@ -161,7 +161,7 @@ Deno.serve(async (req) => {
     const epayCode = String(row[idx["Job/Site ID"]]).trim();
 
     const { data: site } = await supabase
-      .from("job_sites")
+      .from("site")
       .select("id, time_zone")
       .eq("epay_site_code", epayCode)
       .maybeSingle();
