@@ -107,8 +107,11 @@ export default function DailyControl() {
     block: ShiftBlock;
     recipients: Recipient[];
     excluded: Candidate[];
-    previewEn: string;
-    previewEs: string;
+    warnEn: string;
+    warnEs: string;
+    clockedEn: string;
+    clockedEs: string;
+    kind: "warning" | "clocked_out";
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -161,9 +164,9 @@ export default function DailyControl() {
   }, []);
 
   async function previewBlock(block: ShiftBlock) {
-    // Fetch eligible recipients + the FULL candidate breakdown + templates.
-    // The breakdown shows excluded people and why (lunch / sub / manager /
-    // already clocked out / exception / no phone) — builds operator trust.
+    // Fetch eligible recipients + candidate breakdown + BOTH templates so
+    // the operator can toggle between the 15-minute warning and the
+    // post-shift clocked-out notice in the modal.
     const [{ data: elig, error: eligErr }, { data: cands }, { data: tpls }] =
       await Promise.all([
         supabase.rpc("fn_eligible_for_shift_block", {
@@ -176,25 +179,34 @@ export default function DailyControl() {
         }),
         supabase
           .from("message_templates")
-          .select("language, body")
-          .eq("notification_type", "END_OF_SHIFT_WARNING")
+          .select("notification_type, language, body")
+          .in("notification_type", ["END_OF_SHIFT_WARNING", "END_OF_SHIFT_CLOCKED_OUT"])
           .eq("active", true),
       ]);
     if (eligErr) {
       setUploadStatus(`Eligibility query failed: ${eligErr.message}`);
       return;
     }
-    const previewEn = tpls?.find((t) => t.language === "en")?.body ?? "";
-    const previewEs = tpls?.find((t) => t.language === "es")?.body ?? "";
+    const find = (type: string, lang: string) =>
+      tpls?.find((t: any) => t.notification_type === type && t.language === lang)?.body ?? "";
     const excluded = ((cands ?? []) as Candidate[]).filter(
       (c) => c.status === "EXCLUDED",
     );
+    // Default to the kind that matches the block's current status: due-now
+    // and past blocks should send the clocked-out notice; upcoming blocks
+    // should send the 15-minute warning.
+    const { status } = statusFor(block, ctNow);
+    const defaultKind: "warning" | "clocked_out" =
+      status === "due" || status === "past" ? "clocked_out" : "warning";
     setConfirm({
       block,
       recipients: (elig ?? []) as Recipient[],
       excluded,
-      previewEn,
-      previewEs,
+      warnEn: find("END_OF_SHIFT_WARNING", "en"),
+      warnEs: find("END_OF_SHIFT_WARNING", "es"),
+      clockedEn: find("END_OF_SHIFT_CLOCKED_OUT", "en"),
+      clockedEs: find("END_OF_SHIFT_CLOCKED_OUT", "es"),
+      kind: defaultKind,
     });
   }
 
@@ -206,7 +218,7 @@ export default function DailyControl() {
       const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shift_block_id: confirm.block.id }),
+        body: JSON.stringify({ shift_block_id: confirm.block.id, kind: confirm.kind }),
       });
       await res.json();
     } finally {
@@ -577,8 +589,13 @@ export default function DailyControl() {
           </ul>
         </section>
 
-        {/* Today's punches — driven by the upload above */}
-        <section id="todays-punches" className="bg-surface border border-border rounded-xl p-5">
+        {/* Today's punches — collapsed by default; driven by the upload above */}
+        <details id="todays-punches" className="bg-surface border border-border rounded-xl" open={false}>
+          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
+            <span>Today's punches ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})</span>
+            <span className="text-blue-1 text-[11px]">click to expand</span>
+          </summary>
+          <section className="px-5 pb-5">
           {(() => {
             const filtered = chainFilter
               ? lct.filter((r) => {
@@ -649,13 +666,16 @@ export default function DailyControl() {
               </>
             );
           })()}
-        </section>
+          </section>
+        </details>
 
-        {/* Notifications */}
-        <section className="bg-surface border border-border rounded-xl p-5">
-          <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-3">
-            Responses ({counts.total})
-          </h2>
+        {/* Notifications — collapsed by default to keep the page tight */}
+        <details className="bg-surface border border-border rounded-xl">
+          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
+            <span>Responses ({counts.total})</span>
+            <span className="text-blue-1 text-[11px]">click to expand</span>
+          </summary>
+          <section className="px-5 pb-5">
           {notifs.length === 0 ? (
             <p className="text-text-muted text-sm py-4">
               No notifications yet — click a checkpoint above to run.
@@ -702,7 +722,8 @@ export default function DailyControl() {
               </table>
             </div>
           )}
-        </section>
+          </section>
+        </details>
       </main>
 
       {/* Confirmation modal */}
@@ -725,21 +746,65 @@ export default function DailyControl() {
               </p>
             </div>
 
-            {/* Message preview — exactly what each recipient will see */}
-            <div className="p-5 border-b border-border bg-bg/40">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2 flex items-baseline justify-between">
-                <span>Message preview</span>
-                <span className="tabular text-text-secondary">
-                  {confirm.recipients.length * 2} message
-                  {confirm.recipients.length * 2 === 1 ? "" : "s"} ·{" "}
-                  {(confirm.previewEn.length + confirm.previewEs.length)} characters
-                </span>
+            {/* Which notification? */}
+            <div className="p-5 border-b border-border bg-bg/40 space-y-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                Which message?
               </div>
-              <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                {confirm.previewEn}
-                {"\n\n"}
-                {confirm.previewEs}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirm({ ...confirm, kind: "warning" })}
+                  className={`text-left border rounded-lg p-3 transition-colors ${
+                    confirm.kind === "warning"
+                      ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                      : "bg-surface border-border hover:border-warning"
+                  }`}
+                >
+                  <div className="text-[12px] font-semibold text-text-primary">
+                    15-minute reminder
+                  </div>
+                  <div className="text-[11px] text-text-muted mt-0.5">
+                    "Your shift will be ending soon"
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
+                  className={`text-left border rounded-lg p-3 transition-colors ${
+                    confirm.kind === "clocked_out"
+                      ? "bg-good/10 border-good ring-2 ring-good/30"
+                      : "bg-surface border-border hover:border-good"
+                  }`}
+                >
+                  <div className="text-[12px] font-semibold text-text-primary">
+                    Clocked-out notice
+                  </div>
+                  <div className="text-[11px] text-text-muted mt-0.5">
+                    "Your shift has ended — please stop"
+                  </div>
+                </button>
               </div>
+
+              {(() => {
+                const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
+                const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
+                return (
+                  <>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                      <span>Message preview</span>
+                      <span className="tabular text-text-secondary">
+                        {confirm.recipients.length * 2} messages · {(en.length + es.length)} characters
+                      </span>
+                    </div>
+                    <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
+                      {en}
+                      {"\n\n"}
+                      {es}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
             <div className="overflow-y-auto p-5 flex-1 space-y-5">
               {/* Excluded breakdown — transparency / trust builder */}
