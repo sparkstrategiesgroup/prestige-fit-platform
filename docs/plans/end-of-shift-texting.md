@@ -32,21 +32,57 @@ Two notifications per shift × two languages × ~13 shift blocks × 3 clients = 
 
 The current schema already has the pieces — we mostly need new rows/types, not new tables:
 
-| Manual artifact | Existing table / column |
+| Manual artifact | Existing / new table |
 |---|---|
-| Epay punches export | `punches` (already modeled IN/OUT, paired) |
-| Open punch (no OUT) | `punches` with `paired_punch_id IS NULL` — index `idx_punches_unpaired` exists |
-| Excel "EXCEPTION" rows | `punch_exceptions` (extend exception types) |
+| Labor Control Tracking workbook row | **new** `labor_control_tracking` (denormalized, one row per shift) — see §3.1 |
+| Open punch (no OUT) | `labor_control_tracking` where `time_out IS NULL` |
+| Excel "EXCEPTION" column | `labor_control_tracking.exceptions_in` (string flag from Epay) |
 | Text Request sends | `notifications` (channel=SMS) — needs two new `notification_type`s |
 | English + Spanish copies | `notifications.language` already supports `en`/`es` |
 | Email to Mary Martin | `notifications` with `channel='EMAIL'`, `recipient_type='MANAGER'` |
 | Shift end time blocks | **new** `shift_blocks` table |
+
+We are keeping **Text Request** as the SMS channel (confirmed — they're already using it). The `notification-sender` Edge Function will call Text Request's API, not Twilio.
 
 ## 3. Proposed changes
 
 ### 3.1 Schema migration `20260520000000_end_of_shift_texting.sql`
 
 ```sql
+-- Labor Control Tracking: denormalized shift rows, one per employee/site/date.
+-- Mirrors the columns currently maintained in the Excel workbook so import
+-- from Epay is a straight column-for-column copy.
+CREATE TABLE public.labor_control_tracking (
+    id                     BIGSERIAL PRIMARY KEY,
+    job_site_id            INTEGER       NOT NULL REFERENCES public.job_sites(id),
+    job_site_name          VARCHAR(200)  NOT NULL,           -- denormalized for diffing vs Epay
+    work_date              DATE          NOT NULL,
+    payroll_number         VARCHAR(10)   NOT NULL,           -- = employees.ee_number
+    employee_name          VARCHAR(200)  NOT NULL,           -- "Last, First" as Epay emits
+    rate_type              VARCHAR(80),                       -- REG / OT / LUNCH / SUB / ...
+    time_in                TIMESTAMPTZ,
+    time_out               TIMESTAMPTZ,                       -- NULL = open punch
+    actual_hours           DECIMAL(5,2),
+    exceptions_in          VARCHAR(100),                      -- Epay's EXCEPTION column, free text
+    per_schedule_out       TIMESTAMPTZ,                       -- scheduled clock-out
+    per_schedule_hours     DECIMAL(5,2),                      -- scheduled shift length
+    people_per_shift       INTEGER,                           -- crew size for that site/shift
+    time_zone              VARCHAR(40)   NOT NULL DEFAULT 'America/Chicago',
+    shift_block_id         INTEGER       REFERENCES public.shift_blocks(id),
+    imported_at            TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+
+    UNIQUE (payroll_number, job_site_id, work_date, time_in)
+);
+
+CREATE INDEX idx_lct_work_date     ON public.labor_control_tracking(work_date);
+CREATE INDEX idx_lct_open_punches  ON public.labor_control_tracking(work_date)
+    WHERE time_out IS NULL;
+CREATE INDEX idx_lct_shift_block   ON public.labor_control_tracking(shift_block_id, work_date);
+CREATE INDEX idx_lct_payroll       ON public.labor_control_tracking(payroll_number);
+
+COMMENT ON TABLE public.labor_control_tracking IS
+    'Denormalized shift rows from Epay punches report. One row per employee/site/date/time_in. Drives end-of-shift texting eligibility.';
+
 -- Shift end time blocks (the 13 rows from p.2 of the PDF)
 CREATE TABLE public.shift_blocks (
     id              SERIAL PRIMARY KEY,
@@ -113,30 +149,29 @@ INSERT INTO public.shift_blocks (label, end_time_local, clients) VALUES
 | `notification-sender` | DB trigger on `notifications` insert with `scheduled_for <= now()`, or pg_cron sweep | Send via Twilio (replacing Text Request). Update `delivery_status`, `twilio_sid`. |
 | `daily-summary-email` | `pg_cron` at 17:00 CT | Email Mary Martin (`mmartin@prestigeusa.net`) the day's send counts per shift block. |
 
-The `shift-block-runner` reproduces the Excel filtering chain as a SQL query (this is the core replacement for steps 2–9 of the PDF's "OPEN APPROPRIATE LABOR CONTROL FILE" section):
+The `shift-block-runner` reproduces the Excel filtering chain as one SQL query against `labor_control_tracking` (this is the core replacement for steps 2–9 of the PDF's "OPEN APPROPRIATE LABOR CONTROL FILE" section):
 
 ```sql
 -- Eligible employees for a given shift_block at run time:
-SELECT DISTINCT e.id, e.first_name, e.last_name, e.cell_phone
-FROM   punches p
-JOIN   employees e ON e.id = p.employee_id
-JOIN   job_sites j ON j.id = p.job_site_id
-WHERE  p.punch_date = CURRENT_DATE
-  AND  p.punch_type = 'IN'
-  AND  p.paired_punch_id IS NULL                       -- open punch
-  AND  p.rate_type IS DISTINCT FROM 'LUNCH'            -- filter step 3
-  AND  p.task NOT IN ('SUB','SUBSTITUTE')              -- filter step 2
-  AND  e.status = 'active'
-  AND  e.phone_valid = TRUE                            -- can actually text them
-  AND  NOT EXISTS (                                     -- filter step 5: no open exception
-       SELECT 1 FROM punch_exceptions pe
-       WHERE pe.punch_id = p.id AND pe.resolution_status = 'open'
-  )
-  AND  e.rate_type NOT IN ('MANAGER','SUPERVISOR')     -- filter step 7
-  AND  <shift_block.clients> @> ARRAY[client_of(j.site_number)];
+SELECT DISTINCT
+       lct.payroll_number,
+       lct.employee_name,
+       e.first_name, e.last_name, e.cell_phone
+FROM   labor_control_tracking lct
+JOIN   employees  e ON e.ee_number   = lct.payroll_number
+JOIN   job_sites  j ON j.id          = lct.job_site_id
+WHERE  lct.work_date         = CURRENT_DATE
+  AND  lct.shift_block_id    = $1                     -- the block being run
+  AND  lct.time_out          IS NULL                  -- open punch (step 4)
+  AND  lct.rate_type IS DISTINCT FROM 'LUNCH'         -- step 3
+  AND  lct.rate_type NOT IN ('SUB','SUBSTITUTE')      -- step 2
+  AND  lct.exceptions_in     IS NULL                  -- step 5
+  AND  e.status              = 'active'
+  AND  e.phone_valid         = TRUE
+  AND  e.is_manager          = FALSE;                 -- step 7
 ```
 
-The "Out per Schedule" filter (step 6) requires the scheduled-out time per employee/day. The current schema does **not** store scheduled shifts — see Open Question 1 below.
+The `per_schedule_out` column on `labor_control_tracking` (populated at Epay import time) closes out the previous Open Question 1 — the schedule is carried on each row, no separate `schedules` table needed.
 
 ### 3.3 Templates seed
 
@@ -148,16 +183,17 @@ Two `END_OF_SHIFT_WARNING` rows (en, es) and two `END_OF_SHIFT_CLOCKED_OUT` rows
 - A UI for editing `shift_blocks` and `message_templates`. Phase 1 is SQL-only; the Lovable.dev front-end can add forms in a follow-up.
 - Punch-edit rules from the PDF NOTES (early clock-in adjustment, late-out correction). Those are still done in Epay until we own the system of record.
 
-## 5. Open questions (need answers before coding)
+## 5. Open questions
 
-1. **Schedules.** "Out per Schedule" filter (PDF p.3 step 6) requires a per-employee scheduled out time. We have no `schedules` table. Options:
-   (a) Add a minimal `employee_schedules(employee_id, work_date, in_time, out_time)` table populated from Epay.
-   (b) Derive expected out time from `shift_blocks` assigned to the job_site.
-   Recommend (a); confirm with Claudia which source of truth she trusts.
-2. **Client mapping.** `job_sites` has no `client` column today; `site_name` carries it as text ("Target # 1234 …"). For the eligibility query above we need a structured `job_sites.client` enum (`TARGET | HOME_DEPOT | KOHLS`). Small additive migration.
-3. **Kohl's multi-TZ.** PDF NOTES say Kohl's spans ET/CT/MT/PT. The `2:00pm CT / 1pm MT / 12pm PT / 3pm ET` block implies a single absolute moment. Confirm: do we trigger off the local store TZ (preferred — needs `job_sites.timezone`), or do all Kohl's stores use a fixed wall-clock per block?
-4. **Twilio vs Text Request.** The existing README mentions a Twilio Edge Function. Is Text Request being retired entirely, or do we keep it for group messages and only automate the *trigger*? Affects whether `notification-sender` calls Twilio or Text Request's API.
-5. **Manager/supervisor flag.** Step 7 is a visual scan. We need either `employees.role` or a flag (`is_manager BOOLEAN`) to make this deterministic.
+**Resolved (2026-05-20):**
+- ~~1. Schedules.~~ Carried per-row on `labor_control_tracking.per_schedule_out` / `per_schedule_hours`.
+- ~~4. Twilio vs Text Request.~~ **Text Request** stays — `notification-sender` will call its API.
+
+**Still open:**
+2. **Client mapping.** `job_sites` has no `client` column today; `site_name` carries it as text ("Target # 1234 …"). For the eligibility query we need a structured `job_sites.client` enum (`TARGET | HOME_DEPOT | KOHLS`). Small additive migration — proposing we just add it in PR B.
+3. **Kohl's multi-TZ.** PDF NOTES say Kohl's spans ET/CT/MT/PT. The `2:00pm CT / 1pm MT / 12pm PT / 3pm ET` block implies a single absolute moment. The new `labor_control_tracking.time_zone` column gives us per-row TZ — confirm: do we trigger off that, or off a fixed wall-clock per block?
+5. **Manager/supervisor flag.** Step 7 is a visual scan. We're proposing `employees.is_manager BOOLEAN` in PR B. Confirm or point at an existing field (e.g. a winteam role mapping) we should use instead.
+6. **Text Request API access.** Confirm we have API credentials (or a contract path to get them). The web app is at `app.textrequest.com`; we need the REST endpoints + auth.
 
 ## 6. Suggested PR sequence
 
