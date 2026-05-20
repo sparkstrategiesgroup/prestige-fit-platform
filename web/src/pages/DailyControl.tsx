@@ -38,6 +38,16 @@ type Recipient = {
   language: string;
 };
 
+type Candidate = {
+  payroll_number: string;
+  employee_name: string;
+  cell_phone: string | null;
+  job_site_name: string;
+  rate_type: string | null;
+  status: "ELIGIBLE" | "EXCLUDED";
+  reason: string | null;
+};
+
 const FUNCTIONS_URL = `${
   import.meta.env.VITE_SUPABASE_URL ?? "https://sshhcpzleurztzksrlvr.supabase.co"
 }/functions/v1`;
@@ -96,6 +106,7 @@ export default function DailyControl() {
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
+    excluded: Candidate[];
     previewEn: string;
     previewEs: string;
   } | null>(null);
@@ -150,28 +161,38 @@ export default function DailyControl() {
   }, []);
 
   async function previewBlock(block: ShiftBlock) {
-    // Fetch eligible recipients AND the message templates so the modal can
-    // show the exact text that will go out (matches Text Request's preview).
-    const [{ data, error }, { data: tpls }] = await Promise.all([
-      supabase.rpc("fn_eligible_for_shift_block", {
-        p_shift_block_id: block.id,
-        p_work_date: new Date().toISOString().slice(0, 10),
-      }),
-      supabase
-        .from("message_templates")
-        .select("language, body")
-        .eq("notification_type", "END_OF_SHIFT_WARNING")
-        .eq("active", true),
-    ]);
-    if (error) {
-      setUploadStatus(`Eligibility query failed: ${error.message}`);
+    // Fetch eligible recipients + the FULL candidate breakdown + templates.
+    // The breakdown shows excluded people and why (lunch / sub / manager /
+    // already clocked out / exception / no phone) — builds operator trust.
+    const [{ data: elig, error: eligErr }, { data: cands }, { data: tpls }] =
+      await Promise.all([
+        supabase.rpc("fn_eligible_for_shift_block", {
+          p_shift_block_id: block.id,
+          p_work_date: new Date().toISOString().slice(0, 10),
+        }),
+        supabase.rpc("fn_candidates_for_shift_block", {
+          p_shift_block_id: block.id,
+          p_work_date: new Date().toISOString().slice(0, 10),
+        }),
+        supabase
+          .from("message_templates")
+          .select("language, body")
+          .eq("notification_type", "END_OF_SHIFT_WARNING")
+          .eq("active", true),
+      ]);
+    if (eligErr) {
+      setUploadStatus(`Eligibility query failed: ${eligErr.message}`);
       return;
     }
     const previewEn = tpls?.find((t) => t.language === "en")?.body ?? "";
     const previewEs = tpls?.find((t) => t.language === "es")?.body ?? "";
+    const excluded = ((cands ?? []) as Candidate[]).filter(
+      (c) => c.status === "EXCLUDED",
+    );
     setConfirm({
       block,
-      recipients: (data ?? []) as Recipient[],
+      recipients: (elig ?? []) as Recipient[],
+      excluded,
       previewEn,
       previewEs,
     });
@@ -219,7 +240,15 @@ export default function DailyControl() {
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
-      refresh();
+      await refresh();
+      // Auto-scroll to the punches table so the operator sees the
+      // imported data immediately.
+      requestAnimationFrame(() => {
+        document.getElementById("todays-punches")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      });
     }
   }
 
@@ -712,10 +741,47 @@ export default function DailyControl() {
                 {confirm.previewEs}
               </div>
             </div>
-            <div className="overflow-y-auto p-5 flex-1">
+            <div className="overflow-y-auto p-5 flex-1 space-y-5">
+              {/* Excluded breakdown — transparency / trust builder */}
+              {confirm.excluded.length > 0 && (() => {
+                const groups: Record<string, Candidate[]> = {};
+                for (const c of confirm.excluded) {
+                  const k = c.reason ?? "Other";
+                  (groups[k] ||= []).push(c);
+                }
+                return (
+                  <div className="bg-bg/50 border border-border rounded-lg p-4">
+                    <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
+                      {confirm.excluded.length} excluded · {confirm.recipients.length + confirm.excluded.length} total candidates
+                    </div>
+                    <ul className="space-y-2">
+                      {Object.entries(groups)
+                        .sort((a, b) => b[1].length - a[1].length)
+                        .map(([reason, list]) => (
+                          <li key={reason} className="text-[13px]">
+                            <details>
+                              <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
+                                <span className="font-semibold tabular text-text-primary">{list.length}</span>
+                                <span className="text-text-secondary">{reason}</span>
+                              </summary>
+                              <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
+                                {list.map((c) => (
+                                  <li key={c.payroll_number + c.employee_name}>
+                                    {c.employee_name} <span className="text-text-muted">· {c.job_site_name}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </details>
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                );
+              })()}
+
               {confirm.recipients.length === 0 ? (
                 <p className="text-text-muted text-sm">
-                  No one is missing for the {confirm.block.label} checkpoint.
+                  No one to text for the {confirm.block.label} checkpoint.
                 </p>
               ) : (
                 <table className="w-full text-[13px]">
