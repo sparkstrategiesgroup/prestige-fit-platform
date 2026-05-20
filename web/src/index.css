@@ -1,0 +1,57 @@
+/* ============================================================================
+ * FIT Command Center — token system
+ *
+ * Every color, spacing, and radius the app uses MUST come from a token here.
+ * Per FIT-BUILD-BRIEF: no hard-coded hex values in component code.
+ *
+ * These are placeholder values. They will be replaced with the official
+ * FIT token set once the Developer Handoff .docx lands.
+ * ========================================================================== */
+
+:root {
+  /* Surfaces */
+  --bg: #f5f7fa;
+  --surface: #ffffff;
+  --border: #e3e7ed;
+
+  /* Text */
+  --text-primary: #1a2230;
+  --text-secondary: #4a5568;
+  --text-muted: #6b7280;
+
+  /* Brand blues */
+  --blue-1: #1f8fd8;
+  --blue-2: #1675b8;
+  --blue-3: #dbeafe;
+
+  /* Status */
+  --good: #10b981;
+  --warning: #f59e0b;
+  --critical: #ef4444;
+  --info: #3b82f6;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Numeric values: tabular-nums per brief "Stack and conventions" */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live-badge pulse — reused by CheckpointTimeline active dot */
+@keyframes live-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.18); opacity: 0.7; }
+}
+.live-pulse {
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+@media print {
+  /* Brief Definition of Done: print stylesheet hides filters, tabs,
+   * timeline, bulk-action toolbar */
+  [data-print="hide"] { display: none !important; }
+  body { background: white; }
+}
