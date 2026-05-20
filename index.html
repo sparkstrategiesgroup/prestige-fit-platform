@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FIT — End-of-Shift Texting Demo</title>
+<style>
+  :root { --brand: #1f8fd8; --bg: #f5f7fa; --card: #fff; --line: #e3e7ed; --ink: #1a2230; --muted: #6b7280; --ok: #10b981; --warn: #f59e0b; --err: #ef4444; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { background: var(--brand); color: #fff; padding: 20px 28px; display: flex; align-items: baseline; justify-content: space-between; }
+  header h1 { font-size: 20px; font-weight: 600; margin: 0; letter-spacing: 0.3px; }
+  header .sub { opacity: 0.85; font-size: 13px; }
+  main { padding: 24px 28px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; max-width: 1400px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+  .card h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: var(--ink); }
+  .card .lede { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  input[type=file], select, button { font: inherit; }
+  input[type=file] { padding: 8px; border: 1px dashed var(--line); border-radius: 6px; background: var(--bg); width: 100%; }
+  select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: #fff; min-width: 180px; }
+  button { padding: 8px 16px; border: 0; border-radius: 6px; background: var(--brand); color: #fff; cursor: pointer; font-weight: 500; }
+  button:hover { background: #1675b8; }
+  button:disabled { background: #cbd5e1; cursor: not-allowed; }
+  button.secondary { background: #e3e7ed; color: var(--ink); }
+  button.secondary:hover { background: #d2d8e0; }
+  pre { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; font-size: 12px; overflow-x: auto; margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+  .pill.en { background: #dbeafe; color: #1e40af; }
+  .pill.es { background: #fef3c7; color: #92400e; }
+  .pill.stub { background: #f3f4f6; color: var(--muted); }
+  .pill.warn { background: #fed7aa; color: #9a3412; }
+  .pill.clk { background: #d1fae5; color: #065f46; }
+  .empty { color: var(--muted); font-style: italic; padding: 20px; text-align: center; }
+  .full { grid-column: 1 / -1; }
+  .stat { font-size: 22px; font-weight: 600; }
+  .stat .label { font-size: 12px; color: var(--muted); font-weight: 400; display: block; margin-top: 2px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 8px; }
+  .preview-body { font-size: 12px; color: var(--ink); background: #f9fafb; padding: 10px; border-radius: 4px; max-width: 480px; }
+  .footer-note { color: var(--muted); font-size: 12px; margin-top: 20px; padding: 0 28px 28px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>FIT — End-of-Shift Texting Demo</h1>
+    <div class="sub">Demo harness. No real SMS is sent. All notifications use TEXT_REQUEST_STUB.</div>
+  </div>
+  <div class="sub">project: <code>sshhcpzleurztzksrlvr</code></div>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>Step 1 — Upload Epay Punches Report</h2>
+    <p class="lede">Pick the .xlsx straight out of Epay. Headers must match the standard report.</p>
+    <div class="row">
+      <input id="file" type="file" accept=".xlsx">
+    </div>
+    <div class="row">
+      <button id="uploadBtn">Upload &amp; parse</button>
+      <span id="uploadStatus" style="color:var(--muted)"></span>
+    </div>
+    <pre id="uploadResult" style="display:none"></pre>
+  </section>
+
+  <section class="card">
+    <h2>Step 2 — Run a shift block</h2>
+    <p class="lede">Picks the eligibility list, writes notifications. No SMS leaves the system.</p>
+    <div class="row">
+      <select id="block"></select>
+      <select id="kind">
+        <option value="">both warning + clocked_out</option>
+        <option value="warning">warning only</option>
+        <option value="clocked_out">clocked_out only</option>
+      </select>
+    </div>
+    <div class="row">
+      <button id="runBtn">Run shift block</button>
+      <span id="runStatus" style="color:var(--muted)"></span>
+    </div>
+    <pre id="runResult" style="display:none"></pre>
+  </section>
+
+  <section class="card full">
+    <h2>Step 3 — Latest notifications</h2>
+    <p class="lede">Most recent 20 rows. Each recipient gets two — one English, one Spanish.</p>
+    <div class="stats">
+      <div class="stat"><span id="statTotal">—</span><span class="label">notifications total</span></div>
+      <div class="stat"><span id="statToday">—</span><span class="label">today</span></div>
+      <div class="stat"><span id="statLastRun">—</span><span class="label">last run</span></div>
+    </div>
+    <div class="row">
+      <button id="refreshBtn" class="secondary">Refresh</button>
+    </div>
+    <div id="notifs">
+      <div class="empty">Loading…</div>
+    </div>
+  </section>
+
+  <section class="card full">
+    <h2>Live data — labor_control_tracking (today)</h2>
+    <p class="lede">Whatever the import has loaded for today. Open punches highlighted.</p>
+    <div id="lct">
+      <div class="empty">Loading…</div>
+    </div>
+  </section>
+
+</main>
+
+<div class="footer-note">
+  Backend: Supabase edge functions <code>epay-import</code> and <code>shift-block-runner</code> on <code>sshhcpzleurztzksrlvr</code>. This page calls them directly with the public anon key — no login. Replace with the real Lovable.dev frontend when ready.
+</div>
+
+<script type="module">
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+
+const SUPABASE_URL = "https://sshhcpzleurztzksrlvr.supabase.co";
+const ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNzaGhjcHpsZXVyenR6a3NybHZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc2ODQ3ODQsImV4cCI6MjA5MzI2MDc4NH0.bIdwa6Kce_-wQvQkFhGX9ryfKHx2QX98QBCVW_pZJhs";
+const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
+const sb = createClient(SUPABASE_URL, ANON_KEY);
+
+const $ = (id) => document.getElementById(id);
+
+async function loadBlocks() {
+  const { data, error } = await sb.from("shift_blocks").select("id, label, end_time_local, clients").order("end_time_local");
+  if (error) { console.error(error); return; }
+  const sel = $("block");
+  sel.innerHTML = "";
+  for (const b of data) {
+    const o = document.createElement("option");
+    o.value = b.id;
+    o.textContent = `${b.label} — ${b.clients.join(", ")}`;
+    sel.appendChild(o);
+  }
+}
+
+function fmtTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+}
+
+async function refreshNotifs() {
+  const { data, error, count } = await sb.from("notifications")
+    .select("id, employee_id, recipient_address, language, notification_type, provider, message_body, sent_at, shift_block_id", { count: "exact" })
+    .order("sent_at", { ascending: false }).limit(20);
+  if (error) { $("notifs").innerHTML = `<div class="empty">${error.message}</div>`; return; }
+  $("statTotal").textContent = count ?? data.length;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const { count: todayCount } = await sb.from("notifications").select("id", { count: "exact", head: true }).gte("sent_at", today.toISOString());
+  $("statToday").textContent = todayCount ?? 0;
+  $("statLastRun").textContent = data.length ? fmtTime(data[0].sent_at) : "—";
+
+  if (!data.length) { $("notifs").innerHTML = `<div class="empty">No notifications yet — run a shift block above.</div>`; return; }
+  const kindPill = (t) => t === "END_OF_SHIFT_WARNING"
+    ? `<span class="pill warn">warning</span>`
+    : t === "END_OF_SHIFT_CLOCKED_OUT" ? `<span class="pill clk">clocked out</span>` : t;
+  const rows = data.map(n => `
+    <tr>
+      <td>${fmtTime(n.sent_at)}</td>
+      <td>${n.recipient_address}</td>
+      <td>${kindPill(n.notification_type)}</td>
+      <td><span class="pill ${n.language}">${n.language}</span></td>
+      <td><span class="pill stub">${n.provider}</span></td>
+      <td><div class="preview-body">${(n.message_body || "").slice(0, 200)}${(n.message_body || "").length > 200 ? "…" : ""}</div></td>
+    </tr>
+  `).join("");
+  $("notifs").innerHTML = `
+    <table><thead><tr><th>Sent</th><th>To</th><th>Type</th><th>Lang</th><th>Provider</th><th>Body</th></tr></thead><tbody>${rows}</tbody></table>
+  `;
+}
+
+async function refreshLCT() {
+  const today = new Date().toISOString().slice(0,10);
+  const { data, error } = await sb.from("labor_control_tracking")
+    .select("payroll_number, employee_name, job_site_name, rate_type, time_in, time_out, shift_block_id")
+    .eq("work_date", today).order("time_in").limit(50);
+  if (error) { $("lct").innerHTML = `<div class="empty">${error.message}</div>`; return; }
+  if (!data.length) { $("lct").innerHTML = `<div class="empty">No labor_control_tracking rows for today yet — upload a Punches Report above.</div>`; return; }
+  const rows = data.map(r => `
+    <tr style="${r.time_out ? '' : 'background:#fff7ed'}">
+      <td>${r.payroll_number}</td>
+      <td>${r.employee_name}</td>
+      <td>${r.job_site_name}</td>
+      <td>${r.rate_type || "—"}</td>
+      <td>${fmtTime(r.time_in)}</td>
+      <td>${r.time_out ? fmtTime(r.time_out) : '<span class="pill warn">OPEN</span>'}</td>
+      <td>${r.shift_block_id || "—"}</td>
+    </tr>
+  `).join("");
+  $("lct").innerHTML = `
+    <table><thead><tr><th>Payroll #</th><th>Employee</th><th>Site</th><th>Rate</th><th>In</th><th>Out</th><th>Block</th></tr></thead><tbody>${rows}</tbody></table>
+  `;
+}
+
+$("uploadBtn").addEventListener("click", async () => {
+  const f = $("file").files[0];
+  if (!f) { $("uploadStatus").textContent = "Pick a file first."; return; }
+  $("uploadBtn").disabled = true;
+  $("uploadStatus").textContent = "Uploading…";
+  const fd = new FormData(); fd.append("file", f);
+  try {
+    const res = await fetch(`${FUNCTIONS_URL}/epay-import`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY },
+      body: fd,
+    });
+    const json = await res.json();
+    $("uploadResult").style.display = "block";
+    $("uploadResult").textContent = JSON.stringify(json, null, 2);
+    $("uploadStatus").textContent = res.ok ? `Imported ${json.imported || 0}, skipped ${json.skipped || 0}, errors ${(json.errors||[]).length}` : "Failed";
+  } catch (e) { $("uploadStatus").textContent = "Error: " + e.message; }
+  $("uploadBtn").disabled = false;
+  refreshLCT(); refreshNotifs();
+});
+
+$("runBtn").addEventListener("click", async () => {
+  const body = { shift_block_id: parseInt($("block").value, 10) };
+  if ($("kind").value) body.kind = $("kind").value;
+  $("runBtn").disabled = true;
+  $("runStatus").textContent = "Running…";
+  try {
+    const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    $("runResult").style.display = "block";
+    $("runResult").textContent = JSON.stringify(json, null, 2);
+    const sum = (json.runs || []).reduce((a, r) => a + (r.notifications || 0), 0);
+    $("runStatus").textContent = `Wrote ${sum} notification(s).`;
+  } catch (e) { $("runStatus").textContent = "Error: " + e.message; }
+  $("runBtn").disabled = false;
+  refreshNotifs();
+});
+
+$("refreshBtn").addEventListener("click", () => { refreshNotifs(); refreshLCT(); });
+
+await loadBlocks();
+await refreshNotifs();
+await refreshLCT();
+</script>
+
+</body>
+</html>
