@@ -50,6 +50,38 @@ function fmtTime(iso: string | null) {
   });
 }
 
+// Current minute-of-day in Central Time. Most shift_blocks are anchored to
+// America/Chicago; this drives the "due now" highlight on the checkpoint grid.
+function ctMinutesNow(now: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const h = parseInt(parts.find((p) => p.type === "hour")!.value, 10);
+  const m = parseInt(parts.find((p) => p.type === "minute")!.value, 10);
+  return h * 60 + m;
+}
+
+function blockMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(":").map(Number);
+  return h * 60 + m;
+}
+
+type BlockStatus = "due" | "upcoming" | "past" | "future";
+
+function statusFor(block: ShiftBlock, ctNow: number): { status: BlockStatus; minsAway: number } {
+  const end = blockMinutes(block.end_time_local);
+  const warningStart = end - 20; // matches shift_blocks.warning_offset default
+  const clockedEnd = end + 5;    // matches shift_blocks.clocked_offset default
+  if (ctNow >= warningStart && ctNow <= clockedEnd) return { status: "due", minsAway: end - ctNow };
+  if (ctNow > clockedEnd) return { status: "past", minsAway: ctNow - end };
+  const minsAway = warningStart - ctNow;
+  if (minsAway <= 60) return { status: "upcoming", minsAway };
+  return { status: "future", minsAway };
+}
+
 export default function DailyControl() {
   const [blocks, setBlocks] = useState<ShiftBlock[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -59,9 +91,12 @@ export default function DailyControl() {
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
+  const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
+    previewEn: string;
+    previewEs: string;
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -106,17 +141,39 @@ export default function DailyControl() {
     refresh();
   }, []);
 
+  // Update the "due now" badge every 30 seconds. No need to tick faster —
+  // the warning/clocked windows are minute-level.
+  useEffect(() => {
+    const id = window.setInterval(() => setCtNow(ctMinutesNow(new Date())), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
   async function previewBlock(block: ShiftBlock) {
-    // Fetch eligible recipients without sending anything yet.
-    const { data, error } = await supabase.rpc("fn_eligible_for_shift_block", {
-      p_shift_block_id: block.id,
-      p_work_date: new Date().toISOString().slice(0, 10),
-    });
+    // Fetch eligible recipients AND the message templates so the modal can
+    // show the exact text that will go out (matches Text Request's preview).
+    const [{ data, error }, { data: tpls }] = await Promise.all([
+      supabase.rpc("fn_eligible_for_shift_block", {
+        p_shift_block_id: block.id,
+        p_work_date: new Date().toISOString().slice(0, 10),
+      }),
+      supabase
+        .from("message_templates")
+        .select("language, body")
+        .eq("notification_type", "END_OF_SHIFT_WARNING")
+        .eq("active", true),
+    ]);
     if (error) {
       setUploadStatus(`Eligibility query failed: ${error.message}`);
       return;
     }
-    setConfirm({ block, recipients: (data ?? []) as Recipient[] });
+    const previewEn = tpls?.find((t) => t.language === "en")?.body ?? "";
+    const previewEs = tpls?.find((t) => t.language === "es")?.body ?? "";
+    setConfirm({
+      block,
+      recipients: (data ?? []) as Recipient[],
+      previewEn,
+      previewEs,
+    });
   }
 
   async function confirmSend() {
@@ -241,31 +298,87 @@ export default function DailyControl() {
           )}
         </section>
 
-        {/* Checkpoint grid */}
+        {/* Checkpoint grid with real-time highlight */}
         <section className="bg-surface border border-border rounded-xl p-5">
-          <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-3">
-            Today's checkpoints
-          </h2>
+          <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+              Today's checkpoints
+            </h2>
+            {(() => {
+              const due = blocks
+                .map((b) => ({ b, s: statusFor(b, ctNow) }))
+                .find((x) => x.s.status === "due");
+              const next = blocks
+                .map((b) => ({ b, s: statusFor(b, ctNow) }))
+                .filter((x) => x.s.status === "upcoming")
+                .sort((a, z) => a.s.minsAway - z.s.minsAway)[0];
+              if (due) {
+                return (
+                  <span className="text-[12px] font-semibold text-critical tabular">
+                    ● {due.b.label} is due now — send the text
+                  </span>
+                );
+              }
+              if (next) {
+                return (
+                  <span className="text-[12px] font-semibold text-blue-1 tabular">
+                    Next up: {next.b.label} in {next.s.minsAway} min
+                  </span>
+                );
+              }
+              return (
+                <span className="text-[12px] text-text-muted tabular">
+                  No checkpoints in the next hour
+                </span>
+              );
+            })()}
+          </div>
           <ul className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
-            {blocks.map((b) => (
-              <li key={b.id}>
-                <button
-                  onClick={() => previewBlock(b)}
-                  disabled={running === b.id}
-                  className="w-full text-left bg-bg hover:bg-blue-3 border border-border rounded-lg p-3 transition-colors disabled:opacity-50"
-                >
-                  <div className="text-[13px] font-semibold text-text-primary">
-                    {b.label}
-                  </div>
-                  <div className="text-[11px] text-text-muted">
-                    {b.clients.join(" · ")}
-                  </div>
-                  <div className="text-[11px] text-blue-1 mt-1">
-                    {running === b.id ? "Sending…" : "Run this checkpoint →"}
-                  </div>
-                </button>
-              </li>
-            ))}
+            {blocks.map((b) => {
+              const { status, minsAway } = statusFor(b, ctNow);
+              const styles: Record<BlockStatus, string> = {
+                due:      "bg-critical/10 border-critical ring-2 ring-critical/40 live-pulse",
+                upcoming: "bg-blue-3 border-blue-1",
+                past:     "bg-bg border-border opacity-60",
+                future:   "bg-bg border-border",
+              };
+              const badge: Record<BlockStatus, string> = {
+                due:      "DUE NOW",
+                upcoming: `in ${minsAway} min`,
+                past:     `${minsAway} min ago`,
+                future:   "later today",
+              };
+              const badgeColor: Record<BlockStatus, string> = {
+                due:      "text-critical",
+                upcoming: "text-blue-1",
+                past:     "text-text-muted",
+                future:   "text-text-muted",
+              };
+              return (
+                <li key={b.id}>
+                  <button
+                    onClick={() => previewBlock(b)}
+                    disabled={running === b.id}
+                    className={`w-full text-left border rounded-lg p-3 transition-colors hover:bg-blue-3 disabled:opacity-50 ${styles[status]}`}
+                  >
+                    <div className="flex items-baseline justify-between">
+                      <div className="text-[13px] font-semibold text-text-primary">
+                        {b.label}
+                      </div>
+                      <div className={`text-[10px] font-semibold uppercase tracking-wider tabular ${badgeColor[status]}`}>
+                        {badge[status]}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-text-muted mt-0.5">
+                      {b.clients.join(" · ")}
+                    </div>
+                    <div className="text-[11px] text-blue-1 mt-1">
+                      {running === b.id ? "Sending…" : "Run this checkpoint →"}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         </section>
 
@@ -387,10 +500,26 @@ export default function DailyControl() {
                 {confirm.recipients.length === 1 ? "person" : "people"}?
               </h3>
               <p className="text-[13px] text-text-secondary mt-1">
-                Each recipient gets one English and one Spanish text for the{" "}
-                <strong>{confirm.block.label}</strong> checkpoint. Suppressed
-                rows are excluded automatically.
+                <strong>{confirm.block.label}</strong> checkpoint · suppressed
+                rows excluded automatically.
               </p>
+            </div>
+
+            {/* Message preview — exactly what each recipient will see */}
+            <div className="p-5 border-b border-border bg-bg/40">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2 flex items-baseline justify-between">
+                <span>Message preview</span>
+                <span className="tabular text-text-secondary">
+                  {confirm.recipients.length * 2} message
+                  {confirm.recipients.length * 2 === 1 ? "" : "s"} ·{" "}
+                  {(confirm.previewEn.length + confirm.previewEs.length)} characters
+                </span>
+              </div>
+              <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
+                {confirm.previewEn}
+                {"\n\n"}
+                {confirm.previewEs}
+              </div>
             </div>
             <div className="overflow-y-auto p-5 flex-1">
               {confirm.recipients.length === 0 ? (
