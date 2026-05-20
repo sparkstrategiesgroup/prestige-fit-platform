@@ -12,7 +12,7 @@ import Compliance from "./pages/Compliance";
  */
 const TABS: TabDef[] = [
   { to: "/overview", label: "Overview" },
-  { to: "/daily-control", label: "Daily Control" },
+  { to: "/daily-control", label: "Labor Control Tracking" },
   { to: "/punch-pam", label: "Punch & PAM" },
   { to: "/shift-coverage", label: "Shift Coverage" },
   { to: "/compliance", label: "Compliance" },
