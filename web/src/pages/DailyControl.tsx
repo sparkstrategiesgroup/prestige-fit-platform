@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HeaderBar } from "../components/HeaderBar";
 import { KpiCard } from "../components/KpiCard";
+import { TimezoneClocks } from "../components/TimezoneClocks";
 import { supabase } from "../lib/supabase";
 
 type ShiftBlock = {
@@ -179,6 +180,8 @@ export default function DailyControl() {
       />
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
+        <TimezoneClocks />
+
         {/* KPI strip */}
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
           <KpiCard label="ACTIVE CHECKPOINT" value={blocks[0]?.label ?? "—"} />
