@@ -13,12 +13,12 @@
 //       "attachments": [{
 //         "name": "PunchesReport.xlsx",
 //         "content_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-//         "content_base64": "<base64 of the .xlsx>"
+//         "content_base64": "<base64>"
 //       }]
 //     }
 //
-// Validates the shared secret + sender allowlist, decodes the first .xlsx
-// attachment, runs the shared parser, and writes audit rows to
+// Validates the shared secret + sender allowlist, decodes the first .xlsx or
+// .csv attachment, runs the shared parser, and writes audit rows to
 // email_imports + epay_imports.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -56,11 +56,6 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/**
- * Matches a sender against the allowlist:
- *   - exact match (case-insensitive)
- *   - "*@domain.tld" matches any local-part at domain.tld
- */
 async function isSenderAllowed(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -103,7 +98,6 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // Allowlist check first — always record an audit row even if rejected.
   const allow = await isSenderAllowed(supabase, sender);
   if (!allow.allowed) {
     await supabase.from("email_imports").insert({
@@ -117,35 +111,36 @@ Deno.serve(async (req) => {
     return json(403, { error: "sender_not_allowed", sender });
   }
 
-  // Pick the first .xlsx attachment.
-  const xlsx = (body.attachments ?? []).find((a) =>
-    (a?.name ?? "").toLowerCase().endsWith(".xlsx") && !!a?.content_base64
-  );
-  if (!xlsx?.content_base64) {
+  // Pick the first .xlsx or .csv attachment.
+  const reportFile = (body.attachments ?? []).find((a) => {
+    const name = (a?.name ?? "").toLowerCase();
+    return (name.endsWith(".xlsx") || name.endsWith(".csv")) && !!a?.content_base64;
+  });
+  if (!reportFile?.content_base64) {
     await supabase.from("email_imports").insert({
       sender,
       subject: body.subject ?? null,
       received_at: body.received_at ?? null,
       status: "rejected",
-      rejection_reason: "No .xlsx attachment found in payload",
+      rejection_reason: "No .xlsx or .csv attachment found in payload",
       completed_at: new Date().toISOString(),
     });
-    return json(400, { error: "no_xlsx_attachment" });
+    return json(400, { error: "no_report_attachment" });
   }
 
-  const bytes = base64ToBytes(xlsx.content_base64);
+  const bytes = base64ToBytes(reportFile.content_base64);
   const sha = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
     .map((b) => b.toString(16).padStart(2, "0")).join("");
 
-  // Open an email_imports row first so the audit trail exists even if
-  // ingest throws.
+  const attachName = reportFile.name ?? "PunchesReport.xlsx";
+
   const { data: emailImport, error: emailErr } = await supabase
     .from("email_imports")
     .insert({
       sender,
       subject: body.subject ?? null,
       received_at: body.received_at ?? null,
-      attachment_filename: xlsx.name ?? "PunchesReport.xlsx",
+      attachment_filename: attachName,
       attachment_sha256: sha,
       attachment_bytes: bytes.length,
       status: "pending",
@@ -156,12 +151,10 @@ Deno.serve(async (req) => {
   }
   const emailImportId = emailImport.id;
 
-  // Also open the matching epay_imports row so labor_control_tracking
-  // rows are linked to a familiar audit table.
   const { data: epayImport, error: epayErr } = await supabase
     .from("epay_imports")
     .insert({
-      filename: xlsx.name ?? "PunchesReport.xlsx",
+      filename: attachName,
       file_sha256: sha,
       status: "pending",
     })
@@ -171,9 +164,8 @@ Deno.serve(async (req) => {
   }
   const epayImportId = epayImport.id;
 
-  const result = await ingestWorkbookBytes(supabase, bytes, epayImportId);
+  const result = await ingestWorkbookBytes(supabase, bytes, epayImportId, attachName);
 
-  // Map result to status enums.
   let epayStatus: string; let emailStatus: string;
   if (result.headerError) {
     epayStatus = "failed"; emailStatus = "failed";

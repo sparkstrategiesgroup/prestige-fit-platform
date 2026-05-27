@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
   }
   const importId = importRow.id;
 
-  const result = await ingestWorkbookBytes(supabase, buf, importId);
+  const result = await ingestWorkbookBytes(supabase, buf, importId, file.name);
 
   if (result.headerError === "no_header_row") {
     await supabase.from("epay_imports").update({

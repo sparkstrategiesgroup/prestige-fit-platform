@@ -72,8 +72,12 @@ export async function ingestWorkbookBytes(
   supabase: any,
   bytes: Uint8Array,
   importId: number,
+  filename?: string,
 ): Promise<IngestResult> {
-  const wb = XLSX.read(bytes, { type: "array" });
+  const isCsv = filename?.toLowerCase().endsWith(".csv");
+  const wb = isCsv
+    ? XLSX.read(new TextDecoder().decode(bytes), { type: "string" })
+    : XLSX.read(bytes, { type: "array" });
   const sheet = wb.Sheets["PunchesReport"] ?? wb.Sheets[wb.SheetNames[0]];
   // Keep blank rows so absolute indexes stay stable; scan for the header
   // row so Epay can rearrange the top matter without breaking us.
