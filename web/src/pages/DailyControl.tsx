@@ -328,7 +328,7 @@ export default function DailyControl() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx"
+                accept=".xlsx,.csv"
                 onChange={handleUpload}
                 disabled={uploading}
                 className="hidden"
@@ -443,16 +443,16 @@ export default function DailyControl() {
                 Upload Punches Report
               </h2>
               <p className="text-[13px] text-text-secondary mt-1">
-                Drop the .xlsx export from Epay. We'll parse it, auto-create any
+                Drop the .xlsx or .csv export from Epay. We'll parse it, auto-create any
                 new sites, and refresh the dashboard.
               </p>
             </div>
             <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
-              {uploading ? "Uploading…" : "Choose .xlsx file"}
+              {uploading ? "Uploading…" : "Choose file (.xlsx or .csv)"}
               <input
                 ref={fileRef}
                 type="file"
-                accept=".xlsx"
+                accept=".xlsx,.csv"
                 onChange={handleUpload}
                 disabled={uploading}
                 className="hidden"
