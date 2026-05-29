@@ -5,6 +5,7 @@ import DailyControl from "./pages/DailyControl";
 import PunchPAM from "./pages/PunchPAM";
 import ShiftCoverage from "./pages/ShiftCoverage";
 import Compliance from "./pages/Compliance";
+import Scheduling from "./pages/Scheduling";
 
 /**
  * Top-level tabs. Daily Control inserted between Overview and Punch & PAM
@@ -13,6 +14,7 @@ import Compliance from "./pages/Compliance";
 const TABS: TabDef[] = [
   { to: "/overview", label: "Overview" },
   { to: "/daily-control", label: "Labor Control Tracking" },
+  { to: "/scheduling", label: "Scheduling" },
   { to: "/punch-pam", label: "Punch & PAM" },
   { to: "/shift-coverage", label: "Shift Coverage" },
   { to: "/compliance", label: "Compliance" },
@@ -27,6 +29,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
           <Route path="/daily-control" element={<DailyControl />} />
+          <Route path="/scheduling" element={<Scheduling />} />
           <Route path="/punch-pam" element={<PunchPAM />} />
           <Route path="/shift-coverage" element={<ShiftCoverage />} />
           <Route path="/compliance" element={<Compliance />} />
