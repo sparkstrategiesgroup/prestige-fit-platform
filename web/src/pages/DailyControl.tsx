@@ -902,51 +902,98 @@ export default function DailyControl() {
                       </div>
                     </div>
 
-                    {/* Excluded breakdown */}
-                    <div className="overflow-y-auto p-5 flex-1">
+                    {/* Excluded + Exceptions — grouped */}
+                    <div className="overflow-y-auto p-5 flex-1 space-y-4">
                       {confirm.excluded.length === 0 ? (
                         <p className="text-[13px] text-text-muted">
                           No exclusions at this checkpoint.
                         </p>
                       ) : (() => {
-                        const groups: Record<string, Candidate[]> = {};
+                        // Classify each excluded candidate. Operational =
+                        // automatic, expected; Exceptions = needs human attention
+                        // (new hire, subcontractor, punch oddity, missing phone).
+                        const isException = (reason: string): boolean => {
+                          const r = reason.toLowerCase();
+                          return r.includes("phone") ||      // new hire / missing phone
+                            r.includes("subcontract") ||
+                            r.startsWith("sub") ||           // "Substitute / SUB"
+                            r.startsWith("substitute") ||
+                            r.startsWith("punch exception") ||
+                            r === "employee not active" ||
+                            r === "new employee";
+                        };
+                        const exclGroups: Record<string, Candidate[]> = {};
+                        const exceptGroups: Record<string, Candidate[]> = {};
                         for (const c of confirm.excluded) {
                           const k = c.reason ?? "Other";
-                          (groups[k] ||= []).push(c);
+                          const bucket = isException(k) ? exceptGroups : exclGroups;
+                          (bucket[k] ||= []).push(c);
                         }
-                        return (
-                          <div>
-                            <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                              {confirm.excluded.length} excluded ·{" "}
-                              {confirm.recipients.length + confirm.excluded.length} total candidates
+                        const exclTotal = Object.values(exclGroups).reduce((n, l) => n + l.length, 0);
+                        const exceptTotal = Object.values(exceptGroups).reduce((n, l) => n + l.length, 0);
+
+                        const renderGroup = (
+                          title: string,
+                          subtitle: string,
+                          total: number,
+                          groups: Record<string, Candidate[]>,
+                          accent: string,
+                        ) => (
+                          <div className="border border-border rounded-lg">
+                            <div className={`px-4 py-2 border-b border-border rounded-t-lg ${accent}`}>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em]">
+                                {title} · <span className="tabular">{total}</span>
+                              </div>
+                              <div className="text-[11px] opacity-75 mt-0.5">{subtitle}</div>
                             </div>
-                            <ul className="space-y-2">
-                              {Object.entries(groups)
-                                .sort((a, b) => b[1].length - a[1].length)
-                                .map(([reason, list]) => (
-                                  <li key={reason} className="text-[13px]">
-                                    <details>
-                                      <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
-                                        <span className="font-semibold tabular text-text-primary">
-                                          {list.length}
-                                        </span>
-                                        <span className="text-text-secondary">{reason}</span>
-                                      </summary>
-                                      <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
-                                        {list.map((c) => (
-                                          <li key={c.payroll_number + c.employee_name}>
-                                            {c.employee_name}{" "}
-                                            <span className="text-text-muted">
-                                              · {c.job_site_name}
-                                            </span>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </details>
-                                  </li>
-                                ))}
-                            </ul>
+                            {total === 0 ? (
+                              <div className="px-4 py-3 text-[12px] text-text-muted">None</div>
+                            ) : (
+                              <ul className="divide-y divide-border">
+                                {Object.entries(groups)
+                                  .sort((a, b) => b[1].length - a[1].length)
+                                  .map(([reason, list]) => (
+                                    <li key={reason} className="text-[13px]">
+                                      <details>
+                                        <summary className="cursor-pointer flex items-baseline gap-2 px-4 py-2 hover:bg-bg/40">
+                                          <span className="font-semibold tabular text-text-primary">
+                                            {list.length}
+                                          </span>
+                                          <span className="text-text-secondary">{reason}</span>
+                                        </summary>
+                                        <ul className="ml-4 pl-3 pb-2 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
+                                          {list.map((c) => (
+                                            <li key={c.payroll_number + c.employee_name}>
+                                              {c.employee_name}{" "}
+                                              <span className="text-text-muted">· {c.job_site_name}</span>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </details>
+                                    </li>
+                                  ))}
+                              </ul>
+                            )}
                           </div>
+                        );
+
+                        return (
+                          <>
+                            {renderGroup(
+                              "Excluded",
+                              "Already punched out, on lunch, manager — handled automatically",
+                              exclTotal,
+                              exclGroups,
+                              "bg-bg/60 text-text-secondary",
+                            )}
+                            {renderGroup(
+                              "Exceptions",
+                              "New employees, subcontractor labor — review before sending",
+                              exceptTotal,
+                              exceptGroups,
+                              "bg-warning/10 text-warning",
+                            )}
+                          </>
                         );
                       })()}
                     </div>
