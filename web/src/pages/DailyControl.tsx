@@ -24,10 +24,14 @@ type LCT = {
   payroll_number: string;
   employee_name: string;
   job_site_name: string;
+  job_site_id: number;
   rate_type: string | null;
   time_in: string | null;
   time_out: string | null;
   shift_block_id: number | null;
+  work_date: string | null;
+  actual_hours: number | null;
+  site?: { site_id: string } | { site_id: string }[] | null;
 };
 type Recipient = {
   payroll_number: string;
@@ -136,11 +140,11 @@ export default function DailyControl() {
         supabase
           .from("labor_control_tracking")
           .select(
-            "payroll_number,employee_name,job_site_name,rate_type,time_in,time_out,shift_block_id",
+            "payroll_number,employee_name,job_site_name,job_site_id,rate_type,time_in,time_out,shift_block_id,work_date,actual_hours,site:site!labor_control_tracking_job_site_id_fkey(site_id)",
           )
           .eq("work_date", new Date().toISOString().slice(0, 10))
           .order("time_in")
-          .limit(100),
+          .limit(1000),
       ]);
     setNotifs((n ?? []) as Notification[]);
     setLct((l ?? []) as LCT[]);
@@ -292,13 +296,55 @@ export default function DailyControl() {
   const employeesOnClock = new Set(lct.filter((r) => !r.time_out).map((r) => r.payroll_number)).size;
   const closedToday = lct.filter((r) => r.time_out).length;
 
+  // Export today's punches as a CSV with the EXACT Epay Punches Report column
+  // shape so the file is a drop-in replacement for the original export.
+  // Headers must match 1:1 — used downstream by anything that consumes the
+  // Epay format.
   function exportReport() {
-    const headers = ["Payroll #","Employee","Site","Rate","Time In","Time Out","Status"];
-    const rows = lct.map((r) => [
-      r.payroll_number, r.employee_name, r.job_site_name, r.rate_type ?? "",
-      fmtTime(r.time_in), r.time_out ? fmtTime(r.time_out) : "OPEN",
-      r.time_out ? "Closed" : "Open",
-    ]);
+    // MM/DD/YYYY
+    const fmtDate = (d: string | null) => {
+      if (!d) return "";
+      const [y, m, day] = d.split("-");
+      return `${m}/${day}/${y}`;
+    };
+    // MM/DD/YYYY HH:MM (matches Epay's "05/22/2026 14:55" format)
+    const fmtEpayDateTime = (iso: string | null) => {
+      if (!iso) return "";
+      const dt = new Date(iso);
+      const mm = String(dt.getMonth() + 1).padStart(2, "0");
+      const dd = String(dt.getDate()).padStart(2, "0");
+      const yyyy = dt.getFullYear();
+      const hh = String(dt.getHours()).padStart(2, "0");
+      const mi = String(dt.getMinutes()).padStart(2, "0");
+      return `${mm}/${dd}/${yyyy} ${hh}:${mi}`;
+    };
+    // HH:MM (e.g. "5.03" hours -> "05:02")
+    const fmtHours = (h: number | null) => {
+      if (h == null) return "";
+      const total = Math.round(h * 60);
+      const hh = Math.floor(total / 60);
+      const mm = total % 60;
+      return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    };
+
+    const headers = [
+      "Job/Site ID", "Job/Site Name", "Date", "Payroll No", "Employee Name",
+      "Rate Type", "Time In", "Time Out", "Actual Hours",
+    ];
+    const rows = lct.map((r) => {
+      const siteCode = Array.isArray(r.site) ? r.site[0]?.site_id : r.site?.site_id;
+      return [
+      siteCode ?? "",
+      r.job_site_name,
+      fmtDate(r.work_date),
+      r.payroll_number,
+      r.employee_name,
+      r.rate_type ?? "",
+      fmtEpayDateTime(r.time_in),
+      fmtEpayDateTime(r.time_out),
+      fmtHours(r.actual_hours),
+    ];
+    });
     const csv = [headers, ...rows]
       .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
       .join("\n");
@@ -306,7 +352,7 @@ export default function DailyControl() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `labor-control-${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `PunchesReport_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
