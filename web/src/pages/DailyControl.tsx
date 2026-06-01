@@ -112,6 +112,7 @@ export default function DailyControl() {
     clockedEn: string;
     clockedEs: string;
     kind: "warning" | "clocked_out";
+    step: 1 | 2;
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -207,6 +208,7 @@ export default function DailyControl() {
       clockedEn: find("END_OF_SHIFT_CLOCKED_OUT", "en"),
       clockedEs: find("END_OF_SHIFT_CLOCKED_OUT", "es"),
       kind: defaultKind,
+      step: 1,
     });
   }
 
@@ -734,160 +736,216 @@ export default function DailyControl() {
           role="dialog"
           aria-modal="true"
         >
-          <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-5 border-b border-border">
-              <h3 className="text-[16px] font-bold text-text-primary">
-                Send to {confirm.recipients.length}{" "}
-                {confirm.recipients.length === 1 ? "person" : "people"}?
-              </h3>
-              <p className="text-[13px] text-text-secondary mt-1">
-                <strong>{confirm.block.label}</strong> checkpoint · suppressed
-                rows excluded automatically.
-              </p>
-            </div>
+          {(() => {
+            const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
+            const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
+            // Format the block's end_time_local ("11:00:00") as "11:00 AM CT".
+            const [h, m] = (confirm.block.end_time_local ?? "00:00").split(":").map((n) => parseInt(n, 10));
+            const ampm = h >= 12 ? "PM" : "AM";
+            const h12 = h % 12 === 0 ? 12 : h % 12;
+            const punchOut = `${h12}:${String(m).padStart(2, "0")} ${ampm} CT`;
+            return (
+              <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[85vh] flex flex-col">
+                {/* Step indicator */}
+                <div className="px-5 pt-4 pb-2 border-b border-border flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] font-semibold">
+                  <span className={confirm.step === 1 ? "text-blue-1" : "text-text-muted"}>
+                    1. Confirm
+                  </span>
+                  <span className="text-text-muted">→</span>
+                  <span className={confirm.step === 2 ? "text-blue-1" : "text-text-muted"}>
+                    2. Review messages
+                  </span>
+                </div>
 
-            {/* Which notification? */}
-            <div className="p-5 border-b border-border bg-bg/40 space-y-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                Which message?
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "warning" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "warning"
-                      ? "bg-warning/10 border-warning ring-2 ring-warning/30"
-                      : "bg-surface border-border hover:border-warning"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    15-minute reminder
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift will be ending soon"
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "clocked_out"
-                      ? "bg-good/10 border-good ring-2 ring-good/30"
-                      : "bg-surface border-border hover:border-good"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    Clocked-out notice
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift has ended — please stop"
-                  </div>
-                </button>
-              </div>
-
-              {(() => {
-                const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
-                const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
-                return (
+                {/* ===== STEP 1: PUNCH OUT time + reminder type + excluded breakdown ===== */}
+                {confirm.step === 1 && (
                   <>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                      <span>Message preview</span>
-                      <span className="tabular text-text-secondary">
-                        {confirm.recipients.length * 2} messages · {(en.length + es.length)} characters
-                      </span>
+                    <div className="p-5 border-b border-border">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                        Punch out time
+                      </div>
+                      <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
+                        {punchOut}
+                      </div>
+                      <div className="text-[13px] text-text-secondary mt-1">
+                        {confirm.block.label} checkpoint ·{" "}
+                        <strong>{confirm.recipients.length}</strong> eligible
+                      </div>
                     </div>
-                    <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                      {en}
-                      {"\n\n"}
-                      {es}
+
+                    {/* Reminder type toggle */}
+                    <div className="p-5 border-b border-border bg-bg/40 space-y-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                        Which reminder?
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setConfirm({ ...confirm, kind: "warning" })}
+                          className={`text-left border rounded-lg p-3 transition-colors ${
+                            confirm.kind === "warning"
+                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                              : "bg-surface border-border hover:border-warning"
+                          }`}
+                        >
+                          <div className="text-[13px] font-semibold text-text-primary">
+                            15-minute reminder
+                          </div>
+                          <div className="text-[11px] text-text-muted mt-0.5">
+                            "Your shift will be ending soon"
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
+                          className={`text-left border rounded-lg p-3 transition-colors ${
+                            confirm.kind === "clocked_out"
+                              ? "bg-good/10 border-good ring-2 ring-good/30"
+                              : "bg-surface border-border hover:border-good"
+                          }`}
+                        >
+                          <div className="text-[13px] font-semibold text-text-primary">
+                            END SHIFT
+                          </div>
+                          <div className="text-[11px] text-text-muted mt-0.5">
+                            "Your shift has ended — please stop"
+                          </div>
+                        </button>
+                      </div>
                     </div>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="overflow-y-auto p-5 flex-1 space-y-5">
-              {/* Excluded breakdown — transparency / trust builder */}
-              {confirm.excluded.length > 0 && (() => {
-                const groups: Record<string, Candidate[]> = {};
-                for (const c of confirm.excluded) {
-                  const k = c.reason ?? "Other";
-                  (groups[k] ||= []).push(c);
-                }
-                return (
-                  <div className="bg-bg/50 border border-border rounded-lg p-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                      {confirm.excluded.length} excluded · {confirm.recipients.length + confirm.excluded.length} total candidates
-                    </div>
-                    <ul className="space-y-2">
-                      {Object.entries(groups)
-                        .sort((a, b) => b[1].length - a[1].length)
-                        .map(([reason, list]) => (
-                          <li key={reason} className="text-[13px]">
-                            <details>
-                              <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
-                                <span className="font-semibold tabular text-text-primary">{list.length}</span>
-                                <span className="text-text-secondary">{reason}</span>
-                              </summary>
-                              <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
-                                {list.map((c) => (
-                                  <li key={c.payroll_number + c.employee_name}>
-                                    {c.employee_name} <span className="text-text-muted">· {c.job_site_name}</span>
+
+                    {/* Excluded breakdown */}
+                    <div className="overflow-y-auto p-5 flex-1">
+                      {confirm.excluded.length === 0 ? (
+                        <p className="text-[13px] text-text-muted">
+                          No exclusions at this checkpoint.
+                        </p>
+                      ) : (() => {
+                        const groups: Record<string, Candidate[]> = {};
+                        for (const c of confirm.excluded) {
+                          const k = c.reason ?? "Other";
+                          (groups[k] ||= []).push(c);
+                        }
+                        return (
+                          <div>
+                            <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
+                              {confirm.excluded.length} excluded ·{" "}
+                              {confirm.recipients.length + confirm.excluded.length} total candidates
+                            </div>
+                            <ul className="space-y-2">
+                              {Object.entries(groups)
+                                .sort((a, b) => b[1].length - a[1].length)
+                                .map(([reason, list]) => (
+                                  <li key={reason} className="text-[13px]">
+                                    <details>
+                                      <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
+                                        <span className="font-semibold tabular text-text-primary">
+                                          {list.length}
+                                        </span>
+                                        <span className="text-text-secondary">{reason}</span>
+                                      </summary>
+                                      <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
+                                        {list.map((c) => (
+                                          <li key={c.payroll_number + c.employee_name}>
+                                            {c.employee_name}{" "}
+                                            <span className="text-text-muted">
+                                              · {c.job_site_name}
+                                            </span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </details>
                                   </li>
                                 ))}
-                              </ul>
-                            </details>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                );
-              })()}
+                            </ul>
+                          </div>
+                        );
+                      })()}
+                    </div>
 
-              {confirm.recipients.length === 0 ? (
-                <p className="text-text-muted text-sm">
-                  No one to text for the {confirm.block.label} checkpoint.
-                </p>
-              ) : (
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                      <th className="py-2 pr-3 font-medium">Employee</th>
-                      <th className="py-2 pr-3 font-medium">Site</th>
-                      <th className="py-2 pr-3 font-medium">Phone</th>
-                      <th className="py-2 pr-3 font-medium">Lang</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {confirm.recipients.map((r) => (
-                      <tr key={r.payroll_number}>
-                        <td className="py-2 pr-3">{r.employee_name}</td>
-                        <td className="py-2 pr-3">{r.job_site_name}</td>
-                        <td className="py-2 pr-3 tabular">{r.cell_phone}</td>
-                        <td className="py-2 pr-3 text-text-muted">{r.language}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            <div className="p-5 border-t border-border flex justify-end gap-2">
-              <button
-                onClick={() => setConfirm(null)}
-                className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSend}
-                disabled={confirm.recipients.length === 0}
-                className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
-              >
-                Send {confirm.recipients.length * 2} text
-                {confirm.recipients.length === 1 ? "s" : "s"}
-              </button>
-            </div>
-          </div>
+                    <div className="p-5 border-t border-border flex justify-end gap-2">
+                      <button
+                        onClick={() => setConfirm(null)}
+                        className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => setConfirm({ ...confirm, step: 2 })}
+                        disabled={confirm.recipients.length === 0}
+                        className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                      >
+                        Confirm →
+                      </button>
+                    </div>
+                  </>
+                )}
+
+                {/* ===== STEP 2: EN + ES message review + Send ===== */}
+                {confirm.step === 2 && (
+                  <>
+                    <div className="p-5 border-b border-border">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                        Sending to
+                      </div>
+                      <div className="text-[20px] font-bold text-text-primary mt-0.5">
+                        {confirm.recipients.length}{" "}
+                        {confirm.recipients.length === 1 ? "person" : "people"}{" "}
+                        <span className="text-[13px] font-normal text-text-secondary">
+                          · {confirm.recipients.length * 2} messages ({" "}
+                          {confirm.recipients.filter((r) => r.language === "en").length} EN +{" "}
+                          {confirm.recipients.filter((r) => r.language === "es").length} ES )
+                        </span>
+                      </div>
+                      <div className="text-[13px] text-text-secondary mt-1">
+                        {confirm.kind === "warning"
+                          ? "15-minute reminder"
+                          : "END SHIFT"} · {punchOut} · {confirm.block.label}
+                      </div>
+                    </div>
+
+                    <div className="overflow-y-auto p-5 flex-1 grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                          <span>English</span>
+                          <span className="tabular text-text-secondary">{en.length} chars</span>
+                        </div>
+                        <div className="mt-1 bg-bg border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line min-h-[140px]">
+                          {en}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                          <span>Spanish</span>
+                          <span className="tabular text-text-secondary">{es.length} chars</span>
+                        </div>
+                        <div className="mt-1 bg-bg border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line min-h-[140px]">
+                          {es}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="p-5 border-t border-border flex justify-between gap-2">
+                      <button
+                        onClick={() => setConfirm({ ...confirm, step: 1 })}
+                        className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                      >
+                        ← Back
+                      </button>
+                      <button
+                        onClick={confirmSend}
+                        disabled={confirm.recipients.length === 0}
+                        className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                      >
+                        Send {confirm.recipients.length * 2} text
+                        {confirm.recipients.length === 1 ? "" : "s"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </>
