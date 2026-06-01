@@ -736,9 +736,35 @@ export default function DailyControl() {
             const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
             // Format the block's end_time_local ("11:00:00") as "11:00 AM CT".
             const [h, m] = (confirm.block.end_time_local ?? "00:00").split(":").map((n) => parseInt(n, 10));
+            const endMinutes = h * 60 + m;
             const ampm = h >= 12 ? "PM" : "AM";
             const h12 = h % 12 === 0 ? 12 : h % 12;
             const punchOut = `${h12}:${String(m).padStart(2, "0")} ${ampm} CT`;
+            // Current CT wall clock for the "right now" line under PUNCH OUT TIME.
+            const nowH = Math.floor(ctNow / 60);
+            const nowM = ctNow % 60;
+            const nowAmpm = nowH >= 12 ? "PM" : "AM";
+            const nowH12 = nowH % 12 === 0 ? 12 : nowH % 12;
+            const nowStr = `${nowH12}:${String(nowM).padStart(2, "0")} ${nowAmpm} CT`;
+            // Relative-time hint + recommendation.
+            const diff = endMinutes - ctNow; // positive => in the future
+            let relText: string;
+            let recommend: "warning" | "clocked_out";
+            if (diff > 0) {
+              relText = diff >= 60
+                ? `in ${Math.floor(diff / 60)}h ${diff % 60}m`
+                : `in ${diff} min`;
+              recommend = diff <= 20 ? "warning" : "warning";
+            } else if (diff === 0) {
+              relText = "right now";
+              recommend = "clocked_out";
+            } else {
+              const past = -diff;
+              relText = past >= 60
+                ? `${Math.floor(past / 60)}h ${past % 60}m ago`
+                : `${past} min ago`;
+              recommend = "clocked_out";
+            }
             return (
               <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[85vh] flex flex-col">
                 {/* Step indicator */}
@@ -756,13 +782,34 @@ export default function DailyControl() {
                 {confirm.step === 1 && (
                   <>
                     <div className="p-5 border-b border-border">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                        Punch out time
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                            Punch out time
+                          </div>
+                          <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
+                            {punchOut}
+                          </div>
+                          <div className="text-[12px] text-text-secondary mt-1 tabular">
+                            {relText}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                            Right now
+                          </div>
+                          <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
+                            {nowStr}
+                          </div>
+                          <div className="text-[12px] text-text-secondary mt-1">
+                            Recommend:{" "}
+                            <strong className="text-text-primary">
+                              {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
+                            </strong>
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
-                        {punchOut}
-                      </div>
-                      <div className="text-[13px] text-text-secondary mt-1">
+                      <div className="text-[13px] text-text-secondary mt-3 pt-3 border-t border-border">
                         {confirm.block.label} checkpoint ·{" "}
                         <strong>{confirm.recipients.length}</strong> eligible
                       </div>
