@@ -128,6 +128,10 @@ export default function DailyControl() {
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [chainFilter, setChainFilter] = useState<string | null>(null);
+  // The "next action" block + its eligible count, computed reactively as
+  // ctNow ticks. Drives the hero card at the top of the page.
+  const [nextEligible, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
+  const [showOps, setShowOps] = useState(false);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -188,6 +192,38 @@ export default function DailyControl() {
     const id = window.setInterval(() => setCtNow(ctMinutesNow(new Date())), 30000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Determine the "next action" block — DUE NOW if any, else the closest
+  // upcoming block. Re-fetch its eligible count whenever it changes (or every
+  // 30s with ctNow tick).
+  const nextBlock = (() => {
+    if (blocks.length === 0) return null;
+    const due = blocks.find((b) => statusFor(b, ctNow).status === "due");
+    if (due) return due;
+    const upcoming = blocks
+      .map((b) => ({ b, s: statusFor(b, ctNow) }))
+      .filter((x) => x.s.status === "upcoming" || x.s.status === "future")
+      .sort((a, c) => a.s.minsAway - c.s.minsAway)[0];
+    return upcoming?.b ?? null;
+  })();
+
+  useEffect(() => {
+    if (!nextBlock) {
+      setNextEligible(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.rpc("fn_candidates_for_shift_block", {
+        p_shift_block_id: nextBlock.id,
+        p_work_date: new Date().toISOString().slice(0, 10),
+      });
+      if (cancelled) return;
+      const count = (data ?? []).filter((c: { status: string }) => c.status === "ELIGIBLE").length;
+      setNextEligible({ blockId: nextBlock.id, count });
+    })();
+    return () => { cancelled = true; };
+  }, [nextBlock?.id, ctNow, lct.length]);
 
   async function previewBlock(block: ShiftBlock) {
     // Fetch eligible recipients + candidate breakdown + BOTH templates so
@@ -415,7 +451,109 @@ export default function DailyControl() {
       />
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
-        <TimezoneClocks />
+        {/* ============================================================== */}
+        {/* HERO — the one thing the operator should do next.              */}
+        {/* ============================================================== */}
+        {nextBlock && (() => {
+          const status = statusFor(nextBlock, ctNow);
+          const [bh, bm] = nextBlock.end_time_local.split(":").map(Number);
+          const ampm = bh >= 12 ? "PM" : "AM";
+          const h12 = bh % 12 === 0 ? 12 : bh % 12;
+          const punchOut = `${h12}:${String(bm).padStart(2, "0")} ${ampm} CT`;
+          // Time-to label
+          const mins = status.minsAway;
+          let when: string;
+          if (status.status === "due") {
+            when = mins > 0 ? `Due in ${mins} min` : `${-mins} min past`;
+          } else {
+            when = mins >= 60 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : `in ${mins} min`;
+          }
+          const recommend: "warning" | "clocked_out" =
+            status.status === "past" || (status.status === "due" && mins <= 0)
+              ? "clocked_out"
+              : "warning";
+          const due = status.status === "due";
+          const count = nextEligible?.blockId === nextBlock.id ? nextEligible.count : null;
+          return (
+            <section
+              className={`rounded-xl shadow-sm border p-6 ${
+                due
+                  ? "bg-warning/10 border-warning"
+                  : "bg-surface border-border"
+              }`}
+            >
+              <div className="flex items-start justify-between flex-wrap gap-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                    {due ? "Due now" : "Next punch-out"}
+                  </div>
+                  <h2 className="text-[28px] font-bold text-text-primary leading-tight mt-1 tabular">
+                    {punchOut}
+                    <span className="text-[16px] font-normal text-text-secondary ml-3">
+                      {nextBlock.label}
+                    </span>
+                  </h2>
+                  <div className="text-[14px] text-text-secondary mt-1 tabular">
+                    {when}
+                    {count !== null && (
+                      <>
+                        {" · "}
+                        <strong className="text-text-primary">{count}</strong>{" "}
+                        {count === 1 ? "person" : "people"} ready to text
+                      </>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => previewBlock(nextBlock)}
+                  disabled={!!running || count === 0}
+                  className={`text-[15px] font-semibold px-6 py-3 rounded-lg transition-colors disabled:opacity-50 ${
+                    due
+                      ? "bg-warning text-white hover:opacity-90"
+                      : "bg-blue-1 text-white hover:bg-blue-2"
+                  }`}
+                >
+                  Review and send →
+                </button>
+              </div>
+              {/* Secondary actions inline */}
+              <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-text-secondary">
+                <a href="#todays-punches" className="hover:text-text-primary">
+                  {lct.length} punches loaded ↓
+                </a>
+                <span>·</span>
+                <a href="#store-exceptions" className="hover:text-text-primary">
+                  Manage store exceptions
+                </a>
+                <span className="ml-auto">
+                  Recommended:{" "}
+                  <strong className="text-text-primary">
+                    {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
+                  </strong>
+                </span>
+              </div>
+            </section>
+          );
+        })()}
+
+        {/* ============================================================== */}
+        {/* OPERATIONS DETAILS — collapsed by default.                     */}
+        {/* ============================================================== */}
+        <details
+          className="bg-surface border border-border rounded-xl"
+          open={showOps}
+          onToggle={(e) => setShowOps((e.target as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer p-5 flex items-center justify-between">
+            <span className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+              Operations details
+            </span>
+            <span className="text-[12px] text-text-muted">
+              {showOps ? "Hide ▴" : "Show ▾"}
+            </span>
+          </summary>
+          <div className="px-5 pb-5 space-y-5">
+            <TimezoneClocks />
 
         {/* Operational KPIs */}
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
@@ -498,6 +636,8 @@ export default function DailyControl() {
             </div>
           );
         })()}
+          </div>
+        </details>
 
         {/* Upload Punches Report */}
         <section className="bg-surface border border-border rounded-xl p-5">
@@ -835,21 +975,8 @@ export default function DailyControl() {
               recommend = "clocked_out";
             }
             return (
-              <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[85vh] flex flex-col">
-                {/* Step indicator */}
-                <div className="px-5 pt-4 pb-2 border-b border-border flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] font-semibold">
-                  <span className={confirm.step === 1 ? "text-blue-1" : "text-text-muted"}>
-                    1. Confirm
-                  </span>
-                  <span className="text-text-muted">→</span>
-                  <span className={confirm.step === 2 ? "text-blue-1" : "text-text-muted"}>
-                    2. Review messages
-                  </span>
-                </div>
-
-                {/* ===== STEP 1: PUNCH OUT time + reminder type + excluded breakdown ===== */}
-                {confirm.step === 1 && (
-                  <>
+              <div className="bg-surface rounded-xl shadow-xl border border-border max-w-3xl w-full max-h-[90vh] flex flex-col">
+                <>
                     <div className="p-5 border-b border-border">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -1069,74 +1196,34 @@ export default function DailyControl() {
                       })()}
                     </div>
 
-                    <div className="p-5 border-t border-border flex justify-end gap-2">
-                      <button
-                        onClick={() => setConfirm(null)}
-                        className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => setConfirm({ ...confirm, step: 2 })}
-                        disabled={confirm.recipients.length === 0}
-                        className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
-                      >
-                        Confirm →
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {/* ===== STEP 2: EN + ES message review + Send ===== */}
-                {confirm.step === 2 && (
-                  <>
-                    <div className="p-5 border-b border-border">
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                        Sending to
-                      </div>
-                      <div className="text-[20px] font-bold text-text-primary mt-0.5">
-                        {confirm.recipients.length}{" "}
-                        {confirm.recipients.length === 1 ? "person" : "people"}{" "}
-                        <span className="text-[13px] font-normal text-text-secondary">
-                          · {confirm.recipients.length * 2} messages ({" "}
-                          {confirm.recipients.filter((r) => r.language === "en").length} EN +{" "}
-                          {confirm.recipients.filter((r) => r.language === "es").length} ES )
-                        </span>
-                      </div>
-                      <div className="text-[13px] text-text-secondary mt-1">
-                        {confirm.kind === "warning"
-                          ? "15-minute reminder"
-                          : "END SHIFT"} · {punchOut} · {confirm.block.label}
-                      </div>
-                    </div>
-
-                    <div className="overflow-y-auto p-5 flex-1 grid gap-4 sm:grid-cols-2">
+                    {/* Message preview — always visible */}
+                    <div className="px-5 py-4 border-t border-border bg-bg/40 grid gap-3 sm:grid-cols-2">
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                          <span>English</span>
+                          <span>English preview</span>
                           <span className="tabular text-text-secondary">{en.length} chars</span>
                         </div>
-                        <div className="mt-1 bg-bg border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line min-h-[140px]">
+                        <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
                           {en}
                         </div>
                       </div>
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                          <span>Spanish</span>
+                          <span>Spanish preview</span>
                           <span className="tabular text-text-secondary">{es.length} chars</span>
                         </div>
-                        <div className="mt-1 bg-bg border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line min-h-[140px]">
+                        <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
                           {es}
                         </div>
                       </div>
                     </div>
 
-                    <div className="p-5 border-t border-border flex justify-between gap-2">
+                    <div className="p-5 border-t border-border flex items-center justify-between gap-2">
                       <button
-                        onClick={() => setConfirm({ ...confirm, step: 1 })}
+                        onClick={() => setConfirm(null)}
                         className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
                       >
-                        ← Back
+                        Cancel
                       </button>
                       <button
                         onClick={confirmSend}
@@ -1147,8 +1234,7 @@ export default function DailyControl() {
                         {confirm.recipients.length === 1 ? "" : "s"}
                       </button>
                     </div>
-                  </>
-                )}
+                </>
               </div>
             );
           })()}
@@ -1261,7 +1347,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   };
 
   return (
-    <section className="bg-surface border border-border rounded-xl">
+    <section id="store-exceptions" className="bg-surface border border-border rounded-xl">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
