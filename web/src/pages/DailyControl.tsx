@@ -536,6 +536,8 @@ export default function DailyControl() {
           )}
         </section>
 
+        <StoreExceptionsCard onChange={refresh} />
+
         {/* Checkpoint grid with real-time highlight */}
         <section className="bg-surface border border-border rounded-xl p-5">
           {/* Client filter chips */}
@@ -1153,5 +1155,283 @@ export default function DailyControl() {
         </div>
       )}
     </>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* StoreExceptionsCard                                                        */
+/* -------------------------------------------------------------------------- */
+/* Today's active store exceptions + a quick add form. Field teams call/text
+   the ops lead with things like "T0067 closed today" — capturing them here
+   immediately reflects in the checkpoint modal (rows excluded with reason
+   'Store exception: ...').                                                   */
+
+type StoreException = {
+  id: number;
+  site_id: string;
+  exception_date: string;
+  exception_type: string;
+  note: string | null;
+  source: string;
+  reporter: string | null;
+  active: boolean;
+  created_at: string;
+};
+
+const EXCEPTION_TYPES: { value: string; label: string }[] = [
+  { value: "closed",            label: "Closed" },
+  { value: "reduced_staffing",  label: "Reduced staffing" },
+  { value: "do_not_text",       label: "Do not text" },
+  { value: "holiday",           label: "Holiday" },
+  { value: "other",             label: "Other" },
+];
+
+function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [rows, setRows] = useState<StoreException[]>([]);
+  const [open, setOpen] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [siteId, setSiteId] = useState("");
+  const [exType, setExType] = useState("closed");
+  const [note, setNote] = useState("");
+  const [source, setSource] = useState("phone");
+  const [reporter, setReporter] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    const { data } = await supabase
+      .from("store_exception")
+      .select("*")
+      .eq("exception_date", today)
+      .eq("active", true)
+      .order("created_at", { ascending: false });
+    setRows((data ?? []) as StoreException[]);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const reset = () => {
+    setSiteId("");
+    setExType("closed");
+    setNote("");
+    setSource("phone");
+    setReporter("");
+    setError(null);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!siteId.trim()) {
+      setError("Site ID is required");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const { error: insErr } = await supabase.from("store_exception").insert({
+      site_id: siteId.trim().toUpperCase(),
+      exception_date: today,
+      exception_type: exType,
+      note: note.trim() || null,
+      source,
+      reporter: reporter.trim() || null,
+      active: true,
+    });
+    setSaving(false);
+    if (insErr) {
+      setError(insErr.message);
+      return;
+    }
+    reset();
+    setShowAdd(false);
+    await load();
+    onChange();
+  };
+
+  const remove = async (row: StoreException) => {
+    if (!confirm(`Remove exception for ${row.site_id}?`)) return;
+    await supabase
+      .from("store_exception")
+      .update({ active: false })
+      .eq("id", row.id);
+    await load();
+    onChange();
+  };
+
+  return (
+    <section className="bg-surface border border-border rounded-xl">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center justify-between p-5 text-left"
+      >
+        <div>
+          <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+            Store exceptions
+            <span className="ml-2 text-text-primary">{rows.length}</span>
+            <span className="ml-1 text-text-secondary font-normal normal-case">
+              active today
+            </span>
+          </h2>
+          <p className="text-[13px] text-text-secondary mt-1">
+            Field-team notes that exclude a site from end-of-shift texting
+            (closures, reduced staffing, "do not text").
+          </p>
+        </div>
+        <span className="text-text-muted text-[12px]">{open ? "Hide ▴" : "Show ▾"}</span>
+      </button>
+
+      {open && (
+        <div className="px-5 pb-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] text-text-secondary">
+              {rows.length === 0
+                ? "No exceptions logged for today."
+                : `${rows.length} active.`}
+            </span>
+            {!showAdd && (
+              <button
+                onClick={() => setShowAdd(true)}
+                className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+              >
+                + Add exception
+              </button>
+            )}
+          </div>
+
+          {showAdd && (
+            <form
+              onSubmit={submit}
+              className="bg-bg/50 border border-border rounded-lg p-4 grid gap-3 sm:grid-cols-2"
+            >
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+                Site ID
+                <input
+                  type="text"
+                  value={siteId}
+                  onChange={(e) => setSiteId(e.target.value)}
+                  placeholder="e.g. T0067, KOH0130, H3007"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular font-semibold uppercase"
+                  autoFocus
+                />
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+                Type
+                <select
+                  value={exType}
+                  onChange={(e) => setExType(e.target.value)}
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
+                >
+                  {EXCEPTION_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
+                Note
+                <input
+                  type="text"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="What did the field team say? (e.g. 'Closed for inventory')"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
+                />
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+                Source
+                <select
+                  value={source}
+                  onChange={(e) => setSource(e.target.value)}
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
+                >
+                  <option value="phone">Phone</option>
+                  <option value="email">Email</option>
+                  <option value="sms">SMS</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+                Reporter (optional)
+                <input
+                  type="text"
+                  value={reporter}
+                  onChange={(e) => setReporter(e.target.value)}
+                  placeholder="Who told us? e.g. 'Store mgr Maria'"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
+                />
+              </label>
+
+              {error && (
+                <div className="sm:col-span-2 text-[12px] text-danger">{error}</div>
+              )}
+
+              <div className="sm:col-span-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdd(false);
+                    reset();
+                  }}
+                  className="text-[13px] font-semibold text-text-secondary hover:text-text-primary px-3 py-1.5"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
+                >
+                  {saving ? "Saving…" : "Save exception"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {rows.length > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <table className="w-full text-[12px] tabular">
+                <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-semibold">Site</th>
+                    <th className="text-left px-3 py-2 font-semibold">Type</th>
+                    <th className="text-left px-3 py-2 font-semibold">Note</th>
+                    <th className="text-left px-3 py-2 font-semibold">Source</th>
+                    <th className="text-left px-3 py-2 font-semibold">Reporter</th>
+                    <th className="px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {rows.map((r) => (
+                    <tr key={r.id}>
+                      <td className="px-3 py-1.5 font-semibold">{r.site_id}</td>
+                      <td className="px-3 py-1.5">
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-warning/15 text-warning">
+                          {EXCEPTION_TYPES.find((t) => t.value === r.exception_type)?.label ?? r.exception_type}
+                        </span>
+                      </td>
+                      <td className="px-3 py-1.5 text-text-secondary">{r.note ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
+                      <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-right">
+                        <button
+                          onClick={() => remove(r)}
+                          className="text-[11px] text-danger hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
