@@ -48,6 +48,8 @@ type Candidate = {
   cell_phone: string | null;
   job_site_name: string;
   rate_type: string | null;
+  time_in: string | null;
+  time_out: string | null;
   status: "ELIGIBLE" | "EXCLUDED";
   reason: string | null;
 };
@@ -962,14 +964,34 @@ export default function DailyControl() {
                                           </span>
                                           <span className="text-text-secondary">{reason}</span>
                                         </summary>
-                                        <ul className="ml-4 pl-3 pb-2 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
-                                          {list.map((c) => (
-                                            <li key={c.payroll_number + c.employee_name}>
-                                              {c.employee_name}{" "}
-                                              <span className="text-text-muted">· {c.job_site_name}</span>
-                                            </li>
-                                          ))}
-                                        </ul>
+                                        <div className="px-4 pb-3 overflow-x-auto">
+                                          <table className="w-full text-[11px] tabular">
+                                            <thead>
+                                              <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                                                <th className="py-1 pr-2 font-medium">Payroll #</th>
+                                                <th className="py-1 pr-2 font-medium">Employee</th>
+                                                <th className="py-1 pr-2 font-medium">Site</th>
+                                                <th className="py-1 pr-2 font-medium">Rate</th>
+                                                <th className="py-1 pr-2 font-medium">Time In</th>
+                                                <th className="py-1 pr-2 font-medium">Time Out</th>
+                                                <th className="py-1 pr-2 font-medium">Phone</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-border/60">
+                                              {list.map((c) => (
+                                                <tr key={c.payroll_number + c.employee_name}>
+                                                  <td className="py-1 pr-2 text-text-primary">{c.payroll_number}</td>
+                                                  <td className="py-1 pr-2 text-text-primary">{c.employee_name}</td>
+                                                  <td className="py-1 pr-2 text-text-secondary">{c.job_site_name}</td>
+                                                  <td className="py-1 pr-2 text-text-muted">{c.rate_type ?? "—"}</td>
+                                                  <td className="py-1 pr-2 text-text-secondary">{fmtTime(c.time_in)}</td>
+                                                  <td className="py-1 pr-2 text-text-secondary">{c.time_out ? fmtTime(c.time_out) : "—"}</td>
+                                                  <td className="py-1 pr-2 text-text-muted">{c.cell_phone ?? "—"}</td>
+                                                </tr>
+                                              ))}
+                                            </tbody>
+                                          </table>
+                                        </div>
                                       </details>
                                     </li>
                                   ))}
