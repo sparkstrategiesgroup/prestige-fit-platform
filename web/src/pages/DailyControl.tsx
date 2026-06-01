@@ -66,6 +66,25 @@ function fmtTime(iso: string | null) {
   });
 }
 
+// Same as fmtTime but drops the date — for tables where every row is "today".
+function fmtTimeOnly(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString(undefined, { timeStyle: "short" });
+}
+
+// "+15551083186" -> "(555) 108-3186"
+function fmtPhone(p: string | null): string {
+  if (!p) return "—";
+  const digits = p.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  return p;
+}
+
 // Current minute-of-day in Central Time. Most shift_blocks are anchored to
 // America/Chicago; this drives the "due now" highlight on the checkpoint grid.
 function ctMinutesNow(now: Date): number {
@@ -964,33 +983,60 @@ export default function DailyControl() {
                                           </span>
                                           <span className="text-text-secondary">{reason}</span>
                                         </summary>
-                                        <div className="px-4 pb-3 overflow-x-auto">
-                                          <table className="w-full text-[11px] tabular">
-                                            <thead>
-                                              <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
-                                                <th className="py-1 pr-2 font-medium">Payroll #</th>
-                                                <th className="py-1 pr-2 font-medium">Employee</th>
-                                                <th className="py-1 pr-2 font-medium">Site</th>
-                                                <th className="py-1 pr-2 font-medium">Rate</th>
-                                                <th className="py-1 pr-2 font-medium">Time In</th>
-                                                <th className="py-1 pr-2 font-medium">Time Out</th>
-                                                <th className="py-1 pr-2 font-medium">Phone</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-border/60">
-                                              {list.map((c) => (
-                                                <tr key={c.payroll_number + c.employee_name}>
-                                                  <td className="py-1 pr-2 text-text-primary">{c.payroll_number}</td>
-                                                  <td className="py-1 pr-2 text-text-primary">{c.employee_name}</td>
-                                                  <td className="py-1 pr-2 text-text-secondary">{c.job_site_name}</td>
-                                                  <td className="py-1 pr-2 text-text-muted">{c.rate_type ?? "—"}</td>
-                                                  <td className="py-1 pr-2 text-text-secondary">{fmtTime(c.time_in)}</td>
-                                                  <td className="py-1 pr-2 text-text-secondary">{c.time_out ? fmtTime(c.time_out) : "—"}</td>
-                                                  <td className="py-1 pr-2 text-text-muted">{c.cell_phone ?? "—"}</td>
+                                        <div className="mx-4 mb-3 rounded-md bg-bg/50 border border-border overflow-hidden">
+                                          <div className="overflow-x-auto">
+                                            <table className="w-full text-[12px] tabular border-collapse">
+                                              <thead className="bg-bg">
+                                                <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                                                  <th className="px-3 py-2 font-semibold">Payroll #</th>
+                                                  <th className="px-3 py-2 font-semibold">Employee</th>
+                                                  <th className="px-3 py-2 font-semibold">Site</th>
+                                                  <th className="px-3 py-2 font-semibold">Rate</th>
+                                                  <th className="px-3 py-2 font-semibold text-right">Time&nbsp;In</th>
+                                                  <th className="px-3 py-2 font-semibold text-right">Time&nbsp;Out</th>
+                                                  <th className="px-3 py-2 font-semibold text-right">Phone</th>
                                                 </tr>
-                                              ))}
-                                            </tbody>
-                                          </table>
+                                              </thead>
+                                              <tbody>
+                                                {list.map((c, i) => {
+                                                  const lunch = (c.rate_type ?? "").toLowerCase().includes("lunch");
+                                                  const sub = (c.rate_type ?? "").toLowerCase().startsWith("sub");
+                                                  return (
+                                                    <tr
+                                                      key={c.payroll_number + c.employee_name}
+                                                      className={`${
+                                                        i % 2 === 0 ? "bg-surface" : "bg-bg/40"
+                                                      } border-t border-border/40`}
+                                                    >
+                                                      <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
+                                                      <td className="px-3 py-1.5 text-text-primary whitespace-nowrap">{c.employee_name}</td>
+                                                      <td className="px-3 py-1.5 text-text-secondary">{c.job_site_name}</td>
+                                                      <td className="px-3 py-1.5">
+                                                        {c.rate_type ? (
+                                                          <span
+                                                            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
+                                                              lunch
+                                                                ? "bg-warning/15 text-warning"
+                                                                : sub
+                                                                  ? "bg-yellow-100 text-yellow-800"
+                                                                  : "bg-bg text-text-secondary border border-border"
+                                                            }`}
+                                                          >
+                                                            {c.rate_type}
+                                                          </span>
+                                                        ) : (
+                                                          <span className="text-text-muted">—</span>
+                                                        )}
+                                                      </td>
+                                                      <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_in)}</td>
+                                                      <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_out)}</td>
+                                                      <td className="px-3 py-1.5 text-right text-text-muted whitespace-nowrap">{fmtPhone(c.cell_phone)}</td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
                                         </div>
                                       </details>
                                     </li>
