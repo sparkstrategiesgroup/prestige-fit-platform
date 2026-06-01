@@ -351,7 +351,7 @@ export default function DailyControl() {
         <TimezoneClocks />
 
         {/* Operational KPIs */}
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="SITES OPEN"
             value={sitesOpen}
@@ -369,11 +369,6 @@ export default function DailyControl() {
             value={lct.filter((r) => r.rate_type === "Lunch" || r.rate_type === "LUNCH").length}
             changeText="0 high severity"
             changeDirection="up"
-          />
-          <KpiCard
-            label="PAM RESOLUTION"
-            value={closedToday + "/" + lct.length}
-            changeText={lct.length > 0 ? `${Math.round((closedToday/lct.length)*100)}% resolved` : undefined}
           />
           <KpiCard
             label="EXCESS HOURS RISK"
