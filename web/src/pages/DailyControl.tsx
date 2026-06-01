@@ -919,6 +919,7 @@ export default function DailyControl() {
                             r.startsWith("sub") ||           // "Substitute / SUB"
                             r.startsWith("substitute") ||
                             r.startsWith("punch exception") ||
+                            r.startsWith("store exception") || // site-level note from field team
                             r === "employee not active" ||
                             r === "new employee";
                         };
@@ -988,7 +989,7 @@ export default function DailyControl() {
                             )}
                             {renderGroup(
                               "Exceptions",
-                              "New employees, subcontractor labor — review before sending",
+                              "New employees, subcontractors, store exceptions — review before sending",
                               exceptTotal,
                               exceptGroups,
                               "bg-warning/10 text-warning",
