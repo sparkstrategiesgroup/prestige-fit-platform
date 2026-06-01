@@ -9,6 +9,7 @@ type ShiftBlock = {
   label: string;
   end_time_local: string;
   clients: string[];
+  days_of_week: boolean[] | null;
 };
 type Notification = {
   id: number;
@@ -180,9 +181,17 @@ export default function DailyControl() {
   useEffect(() => {
     supabase
       .from("shift_blocks")
-      .select("id,label,end_time_local,clients")
+      .select("id,label,end_time_local,clients,days_of_week")
+      .eq("active", true)
       .order("end_time_local")
-      .then(({ data }) => setBlocks((data ?? []) as ShiftBlock[]));
+      .then(({ data }) => {
+        // Filter to checkpoints active for today's day-of-week in CT.
+        const dow = new Date().getDay(); // 0=Sun..6=Sat (local browser TZ, fine for demo)
+        const filtered = ((data ?? []) as ShiftBlock[]).filter(
+          (b) => !b.days_of_week || b.days_of_week[dow],
+        );
+        setBlocks(filtered);
+      });
     refresh();
   }, []);
 
