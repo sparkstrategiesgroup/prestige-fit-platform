@@ -1333,12 +1333,32 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   const [open, setOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
   const [siteId, setSiteId] = useState("");
+  const [siteName, setSiteName] = useState("");
+  const [regionDept, setRegionDept] = useState("");
   const [exType, setExType] = useState("closed");
   const [note, setNote] = useState("");
   const [source, setSource] = useState("phone");
   const [reporter, setReporter] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Look up site name + region/dept when Site ID changes (debounced 250ms).
+  useEffect(() => {
+    if (!siteId.trim()) { setSiteName(""); return; }
+    const handle = setTimeout(async () => {
+      const code = siteId.trim().toUpperCase();
+      const { data } = await supabase.from("site")
+        .select("site_name, region_code")
+        .eq("site_id", code).maybeSingle();
+      if (data) {
+        setSiteName(data.site_name ?? "");
+        if (data.region_code) setRegionDept(data.region_code);
+      } else {
+        setSiteName("");
+      }
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [siteId]);
 
   const load = async () => {
     const { data } = await supabase
@@ -1356,6 +1376,8 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
 
   const reset = () => {
     setSiteId("");
+    setSiteName("");
+    setRegionDept("");
     setExType("closed");
     setNote("");
     setSource("phone");
@@ -1371,11 +1393,18 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
     }
     setSaving(true);
     setError(null);
+    // Stash Region/Dept and Site Name in the note (no schema change needed for demo)
+    const contextParts = [
+      regionDept.trim() ? `Region/Dept: ${regionDept.trim()}` : null,
+      siteName.trim() ? `Site: ${siteName.trim()}` : null,
+      note.trim() || null,
+    ].filter(Boolean);
+    const fullNote = contextParts.length ? contextParts.join(" · ") : null;
     const { error: insErr } = await supabase.from("store_exception").insert({
       site_id: siteId.trim().toUpperCase(),
       exception_date: today,
       exception_type: exType,
-      note: note.trim() || null,
+      note: fullNote,
       source,
       reporter: reporter.trim() || null,
       active: true,
@@ -1445,17 +1474,37 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
           {showAdd && (
             <form
               onSubmit={submit}
-              className="bg-bg/50 border border-border rounded-lg p-4 grid gap-3 sm:grid-cols-2"
+              className="bg-bg/50 border border-border rounded-lg p-4 grid gap-3 sm:grid-cols-3"
             >
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
-                Site ID
+              <label className="text-[12px] font-medium text-text-secondary">
+                Region / Dept #
+                <input
+                  type="text"
+                  value={regionDept}
+                  onChange={(e) => setRegionDept(e.target.value)}
+                  placeholder="e.g. 4006"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
+                />
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary">
+                Job Site ID *
                 <input
                   type="text"
                   value={siteId}
                   onChange={(e) => setSiteId(e.target.value)}
-                  placeholder="e.g. T0067, KOH0130, H3007"
+                  placeholder="T0067 / KOH0130 / H3007"
                   className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular font-semibold uppercase"
                   autoFocus
+                />
+              </label>
+              <label className="text-[12px] font-medium text-text-secondary">
+                Job Site Name
+                <input
+                  type="text"
+                  value={siteName}
+                  readOnly
+                  placeholder="(auto-fills from Site ID)"
+                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-bg/40 text-text-secondary"
                 />
               </label>
               <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
@@ -1472,7 +1521,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                   ))}
                 </select>
               </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-3">
                 Note
                 <input
                   type="text"
@@ -1482,7 +1531,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                   className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
                 />
               </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+              <label className="text-[12px] font-medium text-text-secondary">
                 Source
                 <select
                   value={source}
@@ -1495,7 +1544,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                   <option value="manual">Manual</option>
                 </select>
               </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
+              <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
                 Reporter (optional)
                 <input
                   type="text"
@@ -1507,10 +1556,10 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
               </label>
 
               {error && (
-                <div className="sm:col-span-2 text-[12px] text-danger">{error}</div>
+                <div className="sm:col-span-3 text-[12px] text-danger">{error}</div>
               )}
 
-              <div className="sm:col-span-2 flex justify-end gap-2">
+              <div className="sm:col-span-3 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => {
