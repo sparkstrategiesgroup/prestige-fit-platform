@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { HeaderBar } from "../components/HeaderBar";
 import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
+import { DayOfWeekStrip } from "../components/DayOfWeekStrip";
+import { EpayReportChecklist } from "../components/EpayReportChecklist";
 import { supabase } from "../lib/supabase";
 
 type ShiftBlock = {
@@ -133,6 +135,17 @@ export default function DailyControl() {
   // ctNow ticks. Drives the hero card at the top of the page.
   const [nextEligible, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
   const [showOps, setShowOps] = useState(false);
+  // Day-of-week chip strip selection. Defaults to today. Picking a different
+  // day previews that day's shift tiles; today's data still drives texting.
+  const [selectedDay, setSelectedDay] = useState<number>(() => new Date().getDay());
+  // All active shift blocks (any day). The chip strip and the tile grid both
+  // filter from this array. Separate from `blocks` (which stays as the visible
+  // subset for backward-compat with downstream effects).
+  const [allBlocks, setAllBlocks] = useState<ShiftBlock[]>([]);
+  // Which tile is currently selected for the inline detail strip. NULL = show
+  // all of today's punches. (Reserved for the tile-click filter wiring — not
+  // surfaced in the header yet.)
+  const [, setFilterBlockId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -185,15 +198,22 @@ export default function DailyControl() {
       .eq("active", true)
       .order("end_time_local")
       .then(({ data }) => {
-        // Filter to checkpoints active for today's day-of-week in CT.
-        const dow = new Date().getDay(); // 0=Sun..6=Sat (local browser TZ, fine for demo)
-        const filtered = ((data ?? []) as ShiftBlock[]).filter(
-          (b) => !b.days_of_week || b.days_of_week[dow],
-        );
-        setBlocks(filtered);
+        const all = (data ?? []) as ShiftBlock[];
+        setAllBlocks(all);
+        // Default visible set: today's blocks. Chip strip can change it via
+        // selectedDay; we rederive `blocks` in an effect below.
+        const dow = new Date().getDay();
+        setBlocks(all.filter((b) => !b.days_of_week || b.days_of_week[dow]));
       });
     refresh();
   }, []);
+
+  // Re-derive the visible blocks whenever the chip strip's selectedDay changes.
+  useEffect(() => {
+    setBlocks(allBlocks.filter((b) => !b.days_of_week || b.days_of_week[selectedDay]));
+    // If a tile was selected on a previous day, drop the selection.
+    setFilterBlockId(null);
+  }, [selectedDay, allBlocks]);
 
   // Update the "due now" badge every 30 seconds. No need to tick faster —
   // the warning/clocked windows are minute-level.
@@ -460,6 +480,14 @@ export default function DailyControl() {
       />
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
+        <EpayReportChecklist refreshKey={lct.length} />
+
+        <DayOfWeekStrip
+          blocks={allBlocks}
+          selectedDay={selectedDay}
+          onSelectDay={setSelectedDay}
+        />
+
         {/* ============================================================== */}
         {/* HERO — the one thing the operator should do next.              */}
         {/* ============================================================== */}
@@ -687,6 +715,19 @@ export default function DailyControl() {
 
         <StoreExceptionsCard onChange={refresh} />
 
+        {/* ============================================================== */}
+        {/* TODAY'S PUNCHES — consolidates the tile grid + detail table.   */}
+        {/* ============================================================== */}
+        <div className="space-y-5">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[16px] font-bold uppercase tracking-[0.06em] text-text-primary">
+              Today's Punches
+            </h2>
+            <span className="text-[12px] text-text-secondary">
+              {lct.length} loaded · {blocks.length} {blocks.length === 1 ? "shift" : "shifts"}
+            </span>
+          </div>
+
         {/* Checkpoint grid with real-time highlight */}
         <section className="bg-surface border border-border rounded-xl p-5">
           {/* Client filter chips */}
@@ -807,7 +848,7 @@ export default function DailyControl() {
         {/* Today's punches — collapsed by default; driven by the upload above */}
         <details id="todays-punches" className="bg-surface border border-border rounded-xl" open={false}>
           <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
-            <span>Today's punches ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})</span>
+            <span>Row detail ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})</span>
             <span className="text-blue-1 text-[11px]">click to expand</span>
           </summary>
           <section className="px-5 pb-5">
@@ -883,6 +924,8 @@ export default function DailyControl() {
           })()}
           </section>
         </details>
+        </div>
+        {/* End TODAY'S PUNCHES section */}
 
         {/* Notifications — collapsed by default to keep the page tight */}
         <details className="bg-surface border border-border rounded-xl">

@@ -1,23 +1,15 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { TabNav, type TabDef } from "./components/TabNav";
-import Overview from "./pages/Overview";
 import DailyControl from "./pages/DailyControl";
-import PunchPAM from "./pages/PunchPAM";
-import ShiftCoverage from "./pages/ShiftCoverage";
-import Compliance from "./pages/Compliance";
 import Scheduling from "./pages/Scheduling";
 
 /**
- * Top-level tabs. Daily Control inserted between Overview and Punch & PAM
- * per addendum §3.1 / UX copy §1 (FIT-005).
+ * Cut to 2 tabs for the demo loop. Overview / Punch & PAM / Shift Coverage /
+ * Compliance pages stay in the repo but are unrouted — quick to re-enable.
  */
 const TABS: TabDef[] = [
-  { to: "/overview", label: "Overview" },
   { to: "/daily-control", label: "Labor Control Tracking" },
-  { to: "/scheduling", label: "Scheduling" },
-  { to: "/punch-pam", label: "Punch & PAM" },
-  { to: "/shift-coverage", label: "Shift Coverage" },
-  { to: "/compliance", label: "Compliance" },
+  { to: "/scheduling",    label: "Scheduling" },
 ];
 
 export default function App() {
@@ -26,13 +18,14 @@ export default function App() {
       <div className="min-h-screen bg-bg text-text-primary font-sans">
         <TabNav tabs={TABS} />
         <Routes>
-          <Route path="/" element={<Navigate to="/overview" replace />} />
-          <Route path="/overview" element={<Overview />} />
+          <Route path="/" element={<Navigate to="/daily-control" replace />} />
           <Route path="/daily-control" element={<DailyControl />} />
           <Route path="/scheduling" element={<Scheduling />} />
-          <Route path="/punch-pam" element={<PunchPAM />} />
-          <Route path="/shift-coverage" element={<ShiftCoverage />} />
-          <Route path="/compliance" element={<Compliance />} />
+          {/* Legacy routes redirect rather than 404 so any bookmarks land safely. */}
+          <Route path="/overview" element={<Navigate to="/daily-control" replace />} />
+          <Route path="/punch-pam" element={<Navigate to="/daily-control" replace />} />
+          <Route path="/shift-coverage" element={<Navigate to="/daily-control" replace />} />
+          <Route path="/compliance" element={<Navigate to="/daily-control" replace />} />
         </Routes>
       </div>
     </BrowserRouter>
