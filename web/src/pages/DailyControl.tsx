@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { HeaderBar } from "../components/HeaderBar";
 import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
-import { DayOfWeekStrip } from "../components/DayOfWeekStrip";
 import { EpayReportChecklist } from "../components/EpayReportChecklist";
 import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
 import { supabase } from "../lib/supabase";
@@ -128,25 +127,12 @@ export default function DailyControl() {
   const [running, setRunning] = useState<number | null>(null);
   const [counts, setCounts] = useState({ total: 0, today: 0 });
   const [lastRun, setLastRun] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<string>("");
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [chainFilter, setChainFilter] = useState<string | null>(null);
   // The "next action" block + its eligible count, computed reactively as
   // ctNow ticks. Drives the hero card at the top of the page.
   const [nextEligible, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
   const [showOps, setShowOps] = useState(false);
-  // Day-of-week chip strip selection. Defaults to today. Picking a different
-  // day previews that day's shift tiles; today's data still drives texting.
-  const [selectedDay, setSelectedDay] = useState<number>(() => new Date().getDay());
-  // All active shift blocks (any day). The chip strip and the tile grid both
-  // filter from this array. Separate from `blocks` (which stays as the visible
-  // subset for backward-compat with downstream effects).
-  const [allBlocks, setAllBlocks] = useState<ShiftBlock[]>([]);
-  // Which tile is currently selected for the inline detail strip. NULL = show
-  // all of today's punches. (Reserved for the tile-click filter wiring — not
-  // surfaced in the header yet.)
-  const [, setFilterBlockId] = useState<number | null>(null);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -158,7 +144,6 @@ export default function DailyControl() {
     kind: "warning" | "clocked_out";
     step: 1 | 2;
   } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
     const today = new Date();
@@ -199,22 +184,13 @@ export default function DailyControl() {
       .eq("active", true)
       .order("end_time_local")
       .then(({ data }) => {
-        const all = (data ?? []) as ShiftBlock[];
-        setAllBlocks(all);
-        // Default visible set: today's blocks. Chip strip can change it via
-        // selectedDay; we rederive `blocks` in an effect below.
         const dow = new Date().getDay();
-        setBlocks(all.filter((b) => !b.days_of_week || b.days_of_week[dow]));
+        setBlocks(((data ?? []) as ShiftBlock[]).filter(
+          (b) => !b.days_of_week || b.days_of_week[dow],
+        ));
       });
     refresh();
   }, []);
-
-  // Re-derive the visible blocks whenever the chip strip's selectedDay changes.
-  useEffect(() => {
-    setBlocks(allBlocks.filter((b) => !b.days_of_week || b.days_of_week[selectedDay]));
-    // If a tile was selected on a previous day, drop the selection.
-    setFilterBlockId(null);
-  }, [selectedDay, allBlocks]);
 
   // Update the "due now" badge every 30 seconds. No need to tick faster —
   // the warning/clocked windows are minute-level.
@@ -276,7 +252,7 @@ export default function DailyControl() {
           .eq("active", true),
       ]);
     if (eligErr) {
-      setUploadStatus(`Eligibility query failed: ${eligErr.message}`);
+      console.error("Eligibility query failed:", eligErr.message);
       return;
     }
     const find = (type: string, lang: string) =>
@@ -317,43 +293,6 @@ export default function DailyControl() {
     } finally {
       setRunning(null);
       refresh();
-    }
-  }
-
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setUploadStatus(`Uploading ${file.name}…`);
-    const fd = new FormData();
-    fd.append("file", file);
-    try {
-      const res = await fetch(`${FUNCTIONS_URL}/epay-import`, {
-        method: "POST",
-        body: fd,
-      });
-      const j = await res.json();
-      setUploadStatus(
-        res.ok
-          ? `Imported ${j.imported} row${j.imported === 1 ? "" : "s"}` +
-            (j.sites_created ? `, created ${j.sites_created} new site${j.sites_created === 1 ? "" : "s"}` : "") +
-            (j.errors?.length ? `, ${j.errors.length} error${j.errors.length === 1 ? "" : "s"}` : "")
-          : `Failed: ${j.error ?? "unknown"}`,
-      );
-    } catch (err) {
-      setUploadStatus(`Failed: ${(err as Error).message}`);
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-      await refresh();
-      // Auto-scroll to the punches table so the operator sees the
-      // imported data immediately.
-      requestAnimationFrame(() => {
-        document.getElementById("todays-punches")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
     }
   }
 
@@ -458,17 +397,12 @@ export default function DailyControl() {
                 last run · {fmtTime(lastRun)}
               </span>
             )}
-            <label className="cursor-pointer text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors">
-              {uploading ? "Uploading…" : lct.length > 0 ? "Re-upload" : "Upload"}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.csv"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
+            <a
+              href="/reports"
+              className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors"
+            >
+              Reports →
+            </a>
             <button
               onClick={exportReport}
               disabled={lct.length === 0}
@@ -482,12 +416,6 @@ export default function DailyControl() {
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
         <EpayReportChecklist refreshKey={lct.length} />
-
-        <DayOfWeekStrip
-          blocks={allBlocks}
-          selectedDay={selectedDay}
-          onSelectDay={setSelectedDay}
-        />
 
         {/* ============================================================== */}
         {/* HERO — the one thing the operator should do next.              */}
@@ -677,42 +605,7 @@ export default function DailyControl() {
           </div>
         </details>
 
-        {/* Upload Punches Report */}
-        <section className="bg-surface border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                Upload Punches Report
-              </h2>
-              <p className="text-[13px] text-text-secondary mt-1">
-                Drop the .xlsx or .csv export from Epay. We'll parse it, auto-create any
-                new sites, and refresh the dashboard.
-              </p>
-            </div>
-            <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
-              {uploading ? "Uploading…" : "Choose file (.xlsx or .csv)"}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.csv"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
-          </div>
-          {uploadStatus && (
-            <div className="mt-3 text-[13px] text-text-secondary tabular flex items-center gap-3 flex-wrap">
-              <span>{uploadStatus}</span>
-              <a
-                href="#todays-punches"
-                className="text-blue-1 hover:underline font-semibold"
-              >
-                View imported punches ↓
-              </a>
-            </div>
-          )}
-        </section>
+        {/* Upload Punches Report moved to the Reports tab. */}
 
         <StoreExceptionsCard onChange={refresh} />
 
