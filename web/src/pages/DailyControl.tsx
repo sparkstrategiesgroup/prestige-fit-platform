@@ -4,6 +4,7 @@ import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
 import { DayOfWeekStrip } from "../components/DayOfWeekStrip";
 import { EpayReportChecklist } from "../components/EpayReportChecklist";
+import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
 import { supabase } from "../lib/supabase";
 
 type ShiftBlock = {
@@ -714,6 +715,8 @@ export default function DailyControl() {
         </section>
 
         <StoreExceptionsCard onChange={refresh} />
+
+        <ShiftChangeRequestCard />
 
         {/* ============================================================== */}
         {/* TODAY'S PUNCHES — consolidates the tile grid + detail table.   */}
