@@ -13,6 +13,14 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
+type Recipient = {
+  id: number;
+  email: string;
+  name: string | null;
+  site_id: string | null;
+  active: boolean;
+};
+
 type Revision = {
   id: number;
   uploaded_at: string;
@@ -46,6 +54,10 @@ function timeToMinutes(t: string): number {
 export function ShiftChangeRequestCard() {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<Revision[]>([]);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [showRecipients, setShowRecipients] = useState(false);
+  const [newRecipientEmail, setNewRecipientEmail] = useState("");
+  const [newRecipientName, setNewRecipientName] = useState("");
   const [open, setOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
 
@@ -100,7 +112,35 @@ export function ShiftChangeRequestCard() {
     setRows((data ?? []) as Revision[]);
   };
 
-  useEffect(() => { load(); }, []);
+  const loadRecipients = async () => {
+    const { data } = await supabase
+      .from("shift_form_recipient")
+      .select("id, email, name, site_id, active")
+      .eq("active", true)
+      .order("email");
+    setRecipients((data ?? []) as Recipient[]);
+  };
+
+  useEffect(() => { load(); loadRecipients(); }, []);
+
+  const addRecipient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRecipientEmail.trim()) return;
+    await supabase.from("shift_form_recipient").insert({
+      email: newRecipientEmail.trim().toLowerCase(),
+      name: newRecipientName.trim() || null,
+      active: true,
+    });
+    setNewRecipientEmail("");
+    setNewRecipientName("");
+    loadRecipients();
+  };
+
+  const removeRecipient = async (r: Recipient) => {
+    if (!confirm(`Remove ${r.email} from the reminder list?`)) return;
+    await supabase.from("shift_form_recipient").update({ active: false }).eq("id", r.id);
+    loadRecipients();
+  };
 
   // Computed: shift length in hours = (end - start - meal) / 60
   const shiftHours = (() => {
@@ -309,7 +349,14 @@ export function ShiftChangeRequestCard() {
               Submission cycle
             </span>
             <span>
-              Reminder sent <strong>{reminderLabel} 9 AM CT</strong>
+              Reminder sent <strong>{reminderLabel} 9 AM CT</strong> to{" "}
+              <button
+                type="button"
+                onClick={() => setShowRecipients((v) => !v)}
+                className="underline hover:text-text-primary"
+              >
+                {recipients.length} {recipients.length === 1 ? "person" : "people"}
+              </button>
             </span>
             <span>·</span>
             <span>
@@ -324,6 +371,73 @@ export function ShiftChangeRequestCard() {
               )}
             </span>
           </div>
+
+          {/* Recipient list editor */}
+          {showRecipients && (
+            <div className="border border-border rounded-lg p-3 bg-bg/40 space-y-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                Reminder recipients
+                <span className="ml-2 text-text-muted normal-case font-normal">
+                  · these are the To: addresses Power Automate uses every Tuesday
+                </span>
+              </div>
+              {recipients.length === 0 && (
+                <div className="text-[12px] text-text-muted">No recipients yet.</div>
+              )}
+              {recipients.length > 0 && (
+                <ul className="divide-y divide-border/60">
+                  {recipients.map((r) => (
+                    <li key={r.id} className="flex items-center justify-between py-1.5 text-[12px]">
+                      <div>
+                        <span className="font-semibold text-text-primary">{r.email}</span>
+                        {r.name && <span className="ml-2 text-text-secondary">{r.name}</span>}
+                        {r.site_id && (
+                          <span className="ml-2 text-[10px] uppercase font-semibold text-text-muted">
+                            · {r.site_id}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => removeRecipient(r)}
+                        className="text-[11px] text-danger hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <form onSubmit={addRecipient} className="flex gap-2 flex-wrap items-end pt-2 border-t border-border">
+                <label className="text-[11px] font-medium text-text-secondary grow min-w-[200px]">
+                  Email
+                  <input
+                    type="email"
+                    value={newRecipientEmail}
+                    onChange={(e) => setNewRecipientEmail(e.target.value)}
+                    placeholder="someone@example.com"
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[12px]"
+                  />
+                </label>
+                <label className="text-[11px] font-medium text-text-secondary grow min-w-[160px]">
+                  Name (optional)
+                  <input
+                    type="text"
+                    value={newRecipientName}
+                    onChange={(e) => setNewRecipientName(e.target.value)}
+                    placeholder="e.g. Site mgr Maria"
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[12px]"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="text-[12px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  + Add
+                </button>
+              </form>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <span className="text-[12px] text-text-secondary">
