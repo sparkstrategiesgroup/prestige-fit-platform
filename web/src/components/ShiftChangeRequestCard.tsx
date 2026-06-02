@@ -235,6 +235,42 @@ export function ShiftChangeRequestCard() {
 
   const pendingCount = rows.filter((r) => r.status === "pending").length;
 
+  // Submission cycle: reminder Tue → due Thu 5:00 PM CT. Compute the next
+  // upcoming Thursday 5 PM CT relative to now.
+  const deadline = (() => {
+    const now = new Date();
+    const dow = now.getDay(); // 0=Sun..6=Sat
+    // Days until next Thursday (4). If today is Thu before 5pm, use today.
+    let daysAhead = (4 - dow + 7) % 7;
+    if (daysAhead === 0 && now.getHours() >= 17) daysAhead = 7;
+    const d = new Date(now);
+    d.setDate(d.getDate() + daysAhead);
+    d.setHours(17, 0, 0, 0);
+    return d;
+  })();
+  const reminderDay = (() => {
+    // Most recent Tuesday at or before now
+    const now = new Date();
+    const dow = now.getDay();
+    const daysBack = (dow - 2 + 7) % 7;
+    const d = new Date(now);
+    d.setDate(d.getDate() - daysBack);
+    d.setHours(9, 0, 0, 0);
+    return d;
+  })();
+  const msToDeadline = deadline.getTime() - Date.now();
+  const hrsToDeadline = Math.max(0, Math.floor(msToDeadline / 3_600_000));
+  const daysToDeadline = Math.floor(hrsToDeadline / 24);
+  const remainingHrs = hrsToDeadline % 24;
+  const deadlineLabel = deadline.toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  });
+  const reminderLabel = reminderDay.toLocaleString(undefined, {
+    weekday: "short", month: "short", day: "numeric",
+  });
+  const inWindow = Date.now() >= reminderDay.getTime();
+
   return (
     <section id="shift-changes" className="bg-surface border border-border rounded-xl">
       <button
@@ -263,6 +299,32 @@ export function ShiftChangeRequestCard() {
 
       {open && (
         <div className="px-5 pb-5 space-y-4">
+          {/* Tuesday reminder → Thursday COB deadline banner */}
+          <div className={`flex items-center gap-3 flex-wrap px-3 py-2 rounded-lg border text-[12px] ${
+            inWindow
+              ? "bg-warning/10 border-warning text-warning"
+              : "bg-bg/40 border-border text-text-secondary"
+          }`}>
+            <span className="font-semibold uppercase tracking-[0.06em] text-[10px]">
+              Submission cycle
+            </span>
+            <span>
+              Reminder sent <strong>{reminderLabel} 9 AM CT</strong>
+            </span>
+            <span>·</span>
+            <span>
+              Due <strong>{deadlineLabel}</strong>
+              {hrsToDeadline > 0 && (
+                <span className="ml-1 text-text-muted tabular">
+                  ({daysToDeadline > 0 ? `${daysToDeadline}d ` : ""}{remainingHrs}h left)
+                </span>
+              )}
+              {hrsToDeadline === 0 && (
+                <span className="ml-1 font-semibold">closes today</span>
+              )}
+            </span>
+          </div>
+
           <div className="flex items-center justify-between">
             <span className="text-[12px] text-text-secondary">
               {rows.length === 0
