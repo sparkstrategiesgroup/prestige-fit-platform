@@ -29,6 +29,41 @@ export default function Reports() {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
+  // Blueforce Tracker upload state — separate so a punches upload doesn't
+  // clobber the tracker progress message and vice versa.
+  const [bfUploading, setBfUploading] = useState(false);
+  const [bfStatus, setBfStatus] = useState<string>("");
+  const bfFileRef = useRef<HTMLInputElement>(null);
+
+  const handleBlueforceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBfUploading(true);
+    setBfStatus(`Uploading ${file.name}…`);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch(`${FUNCTIONS_URL}/blueforce-tracker-import`, {
+        method: "POST", body: fd,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setBfStatus(`Failed: ${body.error ?? JSON.stringify(body)}`);
+      } else {
+        const skipped = body.skipped_unknown_sites?.length ?? 0;
+        setBfStatus(
+          `Parsed ${body.rows_parsed} rows · inserted ${body.inserted} store exceptions${
+            skipped > 0 ? ` · skipped ${skipped} unknown site${skipped === 1 ? "" : "s"}` : ""
+          }.`,
+        );
+      }
+    } catch (err) {
+      setBfStatus(`Failed: ${(err as Error).message}`);
+    } finally {
+      setBfUploading(false);
+      if (bfFileRef.current) bfFileRef.current.value = "";
+    }
+  };
 
   const load = async () => {
     const { data } = await supabase
@@ -106,6 +141,39 @@ export default function Reports() {
           {uploadStatus && (
             <div className="mt-3 text-[13px] text-text-secondary tabular">
               {uploadStatus}
+            </div>
+          )}
+        </section>
+
+        {/* Blueforce Tracker upload — store exceptions source of truth */}
+        <section className="bg-surface border border-border rounded-xl p-5">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                Upload Blueforce Tracker
+              </h2>
+              <p className="text-[13px] text-text-secondary mt-1">
+                Drop a chain's Blueforce Tracker .xlsx. We'll read the
+                "Payroll Text Exceptions" sheet and create one Store
+                Exception per row (Notes → exception type, Dept → reporter).
+                Land on the Labor Control Tracking page to see them.
+              </p>
+            </div>
+            <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
+              {bfUploading ? "Uploading…" : "Choose .xlsx file"}
+              <input
+                ref={bfFileRef}
+                type="file"
+                accept=".xlsx"
+                onChange={handleBlueforceUpload}
+                disabled={bfUploading}
+                className="hidden"
+              />
+            </label>
+          </div>
+          {bfStatus && (
+            <div className="mt-3 text-[13px] text-text-secondary tabular">
+              {bfStatus}
             </div>
           )}
         </section>
