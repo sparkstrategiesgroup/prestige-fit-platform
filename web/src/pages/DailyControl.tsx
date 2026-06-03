@@ -182,6 +182,18 @@ export default function DailyControl() {
     kinds: Array<"warning" | "clocked_out">;
     step: 1 | 2;
   } | null>(null);
+  const [sentReceipt, setSentReceipt] = useState<{
+    blockLabel: string;
+    kinds: Array<"warning" | "clocked_out">;
+    messages: Array<{
+      id: number;
+      recipient_address: string;
+      language: string;
+      notification_type: string;
+      message_body: string;
+      sent_at: string;
+    }>;
+  } | null>(null);
 
   async function refresh() {
     const today = new Date();
@@ -321,6 +333,8 @@ export default function DailyControl() {
     if (!confirm) return;
     const blockId = confirm.block.id;
     const kinds = confirm.kinds;
+    const blockLabel = confirm.block.label;
+    const startedAt = new Date().toISOString();
     setRunning(blockId);
     setConfirm(null);
     try {
@@ -334,6 +348,19 @@ export default function DailyControl() {
           body: JSON.stringify({ shift_block_id: blockId, kind: k }),
         }).then((r) => r.json())
       ));
+      // Pull back the rows we just wrote so the operator can see exactly
+      // which texts went out, to whom, in which language.
+      const { data: sent } = await supabase
+        .from("notifications")
+        .select("id, recipient_address, language, notification_type, message_body, sent_at")
+        .eq("shift_block_id", blockId)
+        .gte("sent_at", startedAt)
+        .order("sent_at", { ascending: true });
+      setSentReceipt({
+        blockLabel,
+        kinds,
+        messages: (sent ?? []) as NonNullable<typeof sentReceipt>["messages"],
+      });
     } finally {
       setRunning(null);
       refresh();
@@ -1361,6 +1388,78 @@ export default function DailyControl() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {sentReceipt && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={() => setSentReceipt(null)}
+        >
+          <div
+            className="bg-surface border border-border rounded-xl shadow-card w-full max-w-3xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-border flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-good">
+                  Sent · {sentReceipt.messages.length} message{sentReceipt.messages.length === 1 ? "" : "s"}
+                </div>
+                <h2 className="text-[18px] font-bold text-text-primary mt-0.5">
+                  {sentReceipt.blockLabel} ·{" "}
+                  {sentReceipt.kinds.map((k) =>
+                    k === "warning" ? "15-min reminder" : "End shift"
+                  ).join(" + ")}
+                </h2>
+              </div>
+              <button
+                onClick={() => setSentReceipt(null)}
+                className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+              >
+                Done
+              </button>
+            </div>
+            <div className="p-5">
+              {sentReceipt.messages.length === 0 ? (
+                <p className="text-[13px] text-text-secondary">
+                  No messages were sent (no eligible recipients on this run).
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px] tabular">
+                    <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold">Sent</th>
+                        <th className="text-left px-3 py-2 font-semibold">Recipient</th>
+                        <th className="text-left px-3 py-2 font-semibold w-[50px]">Lang</th>
+                        <th className="text-left px-3 py-2 font-semibold">Type</th>
+                        <th className="text-left px-3 py-2 font-semibold">Message</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {sentReceipt.messages.map((m) => (
+                        <tr key={m.id}>
+                          <td className="px-3 py-1.5 text-text-secondary whitespace-nowrap">{fmtTimeOnly(m.sent_at)}</td>
+                          <td className="px-3 py-1.5 text-text-primary font-semibold">{m.recipient_address}</td>
+                          <td className="px-3 py-1.5">
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-bg text-text-secondary border border-border">
+                              {m.language}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 text-text-secondary">
+                            {m.notification_type === "END_OF_SHIFT_WARNING" ? "Warning"
+                              : m.notification_type === "END_OF_SHIFT_CLOCKED_OUT" ? "End shift"
+                              : m.notification_type}
+                          </td>
+                          <td className="px-3 py-1.5 text-text-primary">{m.message_body}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </>
