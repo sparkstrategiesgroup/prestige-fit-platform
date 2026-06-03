@@ -91,20 +91,74 @@ export function ShiftChangeRequestCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Site name lookup
+  // Site name lookup + preload current schedule from master schedule mappings.
+  // We pull from job_site_schedules joined to shift_blocks (1 row per
+  // shift this site runs) and fall back to schedule_slot rows if the
+  // Master Schedule List has been imported. Each row populates the
+  // SHIFT FORM table with start/end/days so the operator only edits
+  // what's changing.
   useEffect(() => {
     if (!siteId.trim()) { setSiteName(""); return; }
     const handle = setTimeout(async () => {
       const code = siteId.trim().toUpperCase();
-      const { data } = await supabase.from("site")
-        .select("site_name, region_code")
+      const { data: siteRow } = await supabase.from("site")
+        .select("id, site_name, region_code")
         .eq("site_id", code).maybeSingle();
-      if (data) {
-        setSiteName(data.site_name ?? "");
-        if (data.region_code) setRegionDept(data.region_code);
-      } else {
+      if (!siteRow) {
         setSiteName("");
+        return;
       }
+      setSiteName(siteRow.site_name ?? "");
+      if (siteRow.region_code) setRegionDept(siteRow.region_code);
+
+      // Prefer schedule_slot rows when present (Master Schedule List has
+      // landed). Otherwise derive defaults from job_site_schedules + the
+      // block end times.
+      const { data: slots } = await supabase
+        .from("schedule_slot")
+        .select("start_time, end_time, flex_hours, role, days_of_week")
+        .eq("site_id", code);
+
+      let rowsForForm: ShiftRow[] = [];
+      if (slots && slots.length > 0) {
+        rowsForForm = slots.map((s: {
+          start_time: string; end_time: string; flex_hours: number | null;
+          role: string | null; days_of_week: boolean[] | null;
+        }) => ({
+          role: s.role ?? "",
+          start: (s.start_time ?? "").slice(0, 5),
+          end: (s.end_time ?? "").slice(0, 5),
+          meal: s.flex_hours != null ? String(s.flex_hours) : "",
+          days: (s.days_of_week ?? [false,false,false,false,false,false,false])
+            .map((b) => b ? "1" : ""),
+        }));
+      } else {
+        const { data: jss } = await supabase
+          .from("job_site_schedules")
+          .select("shift_block_id, scheduled_out_local, scheduled_hours, people_per_shift, shift_blocks(end_time_local, days_of_week)")
+          .eq("job_site_id", siteRow.id)
+          .eq("active", true)
+          .order("scheduled_out_local");
+        if (jss && jss.length > 0) {
+          rowsForForm = jss.map((r: {
+            scheduled_out_local: string; scheduled_hours: number; people_per_shift: number;
+            shift_blocks: { end_time_local: string; days_of_week: boolean[] | null } | null;
+          }) => {
+            const end = (r.scheduled_out_local ?? r.shift_blocks?.end_time_local ?? "").slice(0, 5);
+            const [eh, em] = end.split(":").map(Number);
+            const endMins = (eh ?? 0) * 60 + (em ?? 0);
+            const startMins = Math.max(0, endMins - Math.round((r.scheduled_hours ?? 8) * 60));
+            const start = `${String(Math.floor(startMins / 60)).padStart(2,"0")}:${String(startMins % 60).padStart(2,"0")}`;
+            const days = (r.shift_blocks?.days_of_week ?? [false,true,true,true,true,true,false])
+              .map((b) => b ? String(r.people_per_shift ?? 1) : "");
+            return { role: "", start, end, meal: "", days };
+          });
+        }
+      }
+
+      // Pad to 15 rows so the SHIFT FORM table stays visually consistent.
+      while (rowsForForm.length < 15) rowsForForm.push(blankRow());
+      setShiftRows(rowsForForm.slice(0, 15));
     }, 250);
     return () => clearTimeout(handle);
   }, [siteId]);
