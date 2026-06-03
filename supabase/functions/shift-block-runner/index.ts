@@ -79,11 +79,11 @@ async function sendViaTextRequest(
   delivery_status: string;
   error?: string;
 }> {
-  const apiKey   = Deno.env.get("TEXT_REQUEST_API_KEY");
+  const apiKey    = Deno.env.get("TEXT_REQUEST_API_KEY");
   const accountId = Deno.env.get("TEXT_REQUEST_ACCOUNT_ID");
   const fromNum   = Deno.env.get("TEXT_REQUEST_FROM_NUMBER");
-  const baseUrl   = Deno.env.get("TEXT_REQUEST_BASE_URL") ?? "https://api.textrequest.com/v3";
-  const sendPath  = Deno.env.get("TEXT_REQUEST_SEND_PATH") ?? "/{accountId}/messages";
+  const baseUrl   = Deno.env.get("TEXT_REQUEST_BASE_URL") ?? "https://api.textrequest.com/api/v3";
+  const sendPath  = Deno.env.get("TEXT_REQUEST_SEND_PATH") ?? "/dashboards/{accountId}/messages";
   const testTo    = Deno.env.get("TEST_RECIPIENT_PHONE");
 
   // No credentials → keep the historical stub behavior so demos still work.
@@ -107,14 +107,19 @@ async function sendViaTextRequest(
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
       body: JSON.stringify({
+        // Send all common field-name variants; TR will use the ones it expects
+        // and ignore the rest. Refine after first successful call.
         from: digitsOnly(fromNum),
         to: finalTo,
         message: finalBody,
+        body: finalBody,
+        phone_number: finalTo,
+        text: finalBody,
       }),
     });
     const respText = await res.text();
