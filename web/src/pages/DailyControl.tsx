@@ -1134,7 +1134,9 @@ export default function DailyControl() {
                                                     <tr
                                                       key={c.payroll_number + c.employee_name}
                                                       className={`${
-                                                        i % 2 === 0 ? "bg-surface" : "bg-bg/40"
+                                                        highlight !== "none"
+                                                          ? "bg-warning/10"
+                                                          : i % 2 === 0 ? "bg-surface" : "bg-bg/40"
                                                       } border-t border-border/40`}
                                                     >
                                                       <td className={`px-3 py-1.5 text-text-primary font-semibold tabular ${highlight === "site" ? hi + " text-warning" : ""}`}>{c.site_id ?? "—"}</td>
