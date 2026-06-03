@@ -38,6 +38,53 @@ export default function Reports() {
   const [bfUploading, setBfUploading] = useState(false);
   const [bfStatus, setBfStatus] = useState<string>("");
   const bfFileRef = useRef<HTMLInputElement>(null);
+  // Summary-email test state
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailStatus, setEmailStatus] = useState<string>("");
+
+  const sendTestEmail = async () => {
+    setEmailSending(true);
+    setEmailStatus("Looking up the most recent checkpoint run…");
+    try {
+      const { data: latest } = await supabase
+        .from("notifications")
+        .select("shift_block_id, sent_at")
+        .not("shift_block_id", "is", null)
+        .order("sent_at", { ascending: false })
+        .limit(1);
+      if (!latest || latest.length === 0) {
+        setEmailStatus("No checkpoint runs found yet — fire one from Labor Control Tracking first.");
+        return;
+      }
+      const { shift_block_id, sent_at } = latest[0];
+      const { data: block } = await supabase
+        .from("shift_blocks").select("label").eq("id", shift_block_id).maybeSingle();
+      // Take the whole batch from this run by looking 60 seconds earlier.
+      const sentAfter = new Date(new Date(sent_at).getTime() - 60_000).toISOString();
+      setEmailStatus(`Sending test summary for ${block?.label ?? `block ${shift_block_id}`}…`);
+      const res = await fetch(`${FUNCTIONS_URL}/notify-summary-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_block_id, sent_after: sentAfter, block_label: block?.label,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEmailStatus(`Failed (${res.status}): ${body.error ?? JSON.stringify(body)}`);
+      } else if (body.skipped) {
+        setEmailStatus(`Skipped: ${body.reason}`);
+      } else {
+        setEmailStatus(
+          `Sent to ${body.sent_to?.join(", ") ?? "(unknown)"} · ${body.messages_in_summary} rows · attachment: ${body.attachment_filename}`,
+        );
+      }
+    } catch (err) {
+      setEmailStatus(`Failed: ${(err as Error).message}`);
+    } finally {
+      setEmailSending(false);
+    }
+  };
 
   const handleBlueforceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -178,6 +225,36 @@ export default function Reports() {
           {bfStatus && (
             <div className="mt-3 text-[13px] text-text-secondary tabular">
               {bfStatus}
+            </div>
+          )}
+        </section>
+
+        {/* Test the post-send summary email pipeline end to end */}
+        <section className="bg-surface border border-border rounded-xl p-5">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                Test summary email
+              </h2>
+              <p className="text-[13px] text-text-secondary mt-1">
+                Sends the post-checkpoint summary email (CSV attached) to whoever
+                is configured on <code>SUMMARY_EMAIL_TO</code> via the Power
+                Automate flow at <code>SUMMARY_EMAIL_WEBHOOK</code>. Uses the
+                most recent checkpoint run as the payload, so fire a real run
+                first if there's nothing in <code>notifications</code> yet.
+              </p>
+            </div>
+            <button
+              onClick={sendTestEmail}
+              disabled={emailSending}
+              className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50"
+            >
+              {emailSending ? "Sending…" : "Send test email"}
+            </button>
+          </div>
+          {emailStatus && (
+            <div className="mt-3 text-[13px] text-text-secondary tabular">
+              {emailStatus}
             </div>
           )}
         </section>
