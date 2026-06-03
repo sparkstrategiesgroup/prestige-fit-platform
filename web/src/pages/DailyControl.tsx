@@ -117,10 +117,10 @@ function statusFor(block: ShiftBlock, ctNow: number): { status: BlockStatus; min
 }
 
 const TZ_STRIP = [
-  { label: "ET", iana: "America/New_York" },
-  { label: "CT", iana: "America/Chicago" },
-  { label: "MT", iana: "America/Denver" },
-  { label: "PT", iana: "America/Los_Angeles" },
+  { label: "EASTERN",  iana: "America/New_York" },
+  { label: "CENTRAL",  iana: "America/Chicago" },
+  { label: "MOUNTAIN", iana: "America/Denver" },
+  { label: "PACIFIC",  iana: "America/Los_Angeles" },
 ];
 
 function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
