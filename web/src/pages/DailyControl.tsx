@@ -1130,8 +1130,6 @@ export default function DailyControl() {
                                               </thead>
                                               <tbody>
                                                 {list.map((c, i) => {
-                                                  const lunch = (c.rate_type ?? "").toLowerCase().includes("lunch");
-                                                  const sub = (c.rate_type ?? "").toLowerCase().startsWith("sub");
                                                   return (
                                                     <tr
                                                       key={c.payroll_number + c.employee_name}
@@ -1145,15 +1143,7 @@ export default function DailyControl() {
                                                       <td className={`px-3 py-1.5 text-text-primary whitespace-nowrap ${highlight === "employee" ? hi + " text-warning font-semibold" : ""}`}>{c.employee_name}</td>
                                                       <td className={`px-3 py-1.5 ${highlight === "rate" ? hi : ""}`}>
                                                         {c.rate_type ? (
-                                                          <span
-                                                            className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
-                                                              lunch
-                                                                ? "bg-warning/15 text-warning"
-                                                                : sub
-                                                                  ? "bg-yellow-100 text-yellow-800"
-                                                                  : "bg-bg text-text-secondary border border-border"
-                                                            }`}
-                                                          >
+                                                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-bg text-text-secondary border border-border">
                                                             {c.rate_type}
                                                           </span>
                                                         ) : (
