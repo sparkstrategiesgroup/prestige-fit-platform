@@ -49,6 +49,7 @@ type Candidate = {
   payroll_number: string;
   employee_name: string;
   cell_phone: string | null;
+  site_id: string | null;
   job_site_name: string;
   rate_type: string | null;
   time_in: string | null;
@@ -786,37 +787,42 @@ export default function DailyControl() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-[13px]">
-                      <thead>
-                        <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                          <th className="py-2 pr-3 font-medium">Payroll #</th>
-                          <th className="py-2 pr-3 font-medium">Employee</th>
-                          <th className="py-2 pr-3 font-medium">Site</th>
-                          <th className="py-2 pr-3 font-medium">Rate</th>
-                          <th className="py-2 pr-3 font-medium">In</th>
-                          <th className="py-2 pr-3 font-medium">Out</th>
+                    <table className="w-full text-[12px] tabular">
+                      <thead className="bg-bg">
+                        <tr className="text-left text-[10px] uppercase tracking-[0.06em] text-text-muted">
+                          <th className="px-3 py-2 font-semibold w-[88px]">Payroll #</th>
+                          <th className="px-3 py-2 font-semibold w-[200px]">Employee</th>
+                          <th className="px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
+                          <th className="px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                          <th className="px-3 py-2 font-semibold w-[80px]">Rate</th>
+                          <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;In</th>
+                          <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;Out</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filtered.map((r) => (
+                        {filtered.map((r) => {
+                          const siteCode = Array.isArray(r.site) ? r.site[0]?.site_id : r.site?.site_id;
+                          return (
                           <tr
                             key={`${r.payroll_number}-${r.time_in}`}
                             className={!r.time_out ? "bg-warning/5" : ""}
                           >
-                            <td className="py-2 pr-3 tabular">{r.payroll_number}</td>
-                            <td className="py-2 pr-3">{r.employee_name}</td>
-                            <td className="py-2 pr-3">{r.job_site_name}</td>
-                            <td className="py-2 pr-3 text-text-muted">{r.rate_type ?? "—"}</td>
-                            <td className="py-2 pr-3 tabular">{fmtTime(r.time_in)}</td>
-                            <td className="py-2 pr-3 tabular">
+                            <td className="px-3 py-1.5 text-text-secondary font-medium">{r.payroll_number}</td>
+                            <td className="px-3 py-1.5">{r.employee_name}</td>
+                            <td className="px-3 py-1.5 text-text-primary font-semibold">{siteCode ?? "—"}</td>
+                            <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name}</td>
+                            <td className="px-3 py-1.5 text-text-muted">{r.rate_type ?? "—"}</td>
+                            <td className="px-3 py-1.5 text-right text-text-secondary">{fmtTime(r.time_in)}</td>
+                            <td className="px-3 py-1.5 text-right">
                               {r.time_out ? (
-                                fmtTime(r.time_out)
+                                <span className="text-text-secondary">{fmtTime(r.time_out)}</span>
                               ) : (
                                 <span className="text-warning font-semibold">OPEN</span>
                               )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1110,13 +1116,14 @@ export default function DailyControl() {
                                             <table className="w-full text-[12px] tabular border-collapse">
                                               <thead className="bg-bg">
                                                 <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
-                                                  <th className="px-3 py-2 font-semibold">Payroll #</th>
-                                                  <th className="px-3 py-2 font-semibold">Employee</th>
-                                                  <th className="px-3 py-2 font-semibold">Site</th>
-                                                  <th className="px-3 py-2 font-semibold">Rate</th>
-                                                  <th className="px-3 py-2 font-semibold text-right">Time&nbsp;In</th>
-                                                  <th className="px-3 py-2 font-semibold text-right">Time&nbsp;Out</th>
-                                                  <th className="px-3 py-2 font-semibold text-right">Phone</th>
+                                                  <th className="px-3 py-2 font-semibold w-[88px]">Payroll #</th>
+                                                  <th className="px-3 py-2 font-semibold w-[200px]">Employee</th>
+                                                  <th className="px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
+                                                  <th className="px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                                                  <th className="px-3 py-2 font-semibold w-[80px]">Rate</th>
+                                                  <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;In</th>
+                                                  <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;Out</th>
+                                                  <th className="px-3 py-2 font-semibold text-right w-[130px]">Phone</th>
                                                 </tr>
                                               </thead>
                                               <tbody>
@@ -1132,6 +1139,7 @@ export default function DailyControl() {
                                                     >
                                                       <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
                                                       <td className="px-3 py-1.5 text-text-primary whitespace-nowrap">{c.employee_name}</td>
+                                                      <td className="px-3 py-1.5 text-text-primary font-semibold tabular">{c.site_id ?? "—"}</td>
                                                       <td className="px-3 py-1.5 text-text-secondary">{c.job_site_name}</td>
                                                       <td className="px-3 py-1.5">
                                                         {c.rate_type ? (
@@ -1329,6 +1337,7 @@ type StoreException = {
   reporter: string | null;
   active: boolean;
   created_at: string;
+  job_site_name?: string | null;
 };
 
 const EXCEPTION_TYPES: { value: string; label: string }[] = [
@@ -1379,7 +1388,18 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
       .eq("exception_date", today)
       .eq("active", true)
       .order("created_at", { ascending: false });
-    setRows((data ?? []) as StoreException[]);
+    const exceptions = (data ?? []) as StoreException[];
+    // Bulk-fetch site names for the listed site IDs and decorate the rows.
+    const ids = Array.from(new Set(exceptions.map((r) => r.site_id))).filter(Boolean);
+    if (ids.length > 0) {
+      const { data: sites } = await supabase
+        .from("site")
+        .select("site_id, site_name")
+        .in("site_id", ids);
+      const nameById = new Map((sites ?? []).map((s) => [s.site_id, s.site_name]));
+      for (const r of exceptions) r.job_site_name = nameById.get(r.site_id) ?? null;
+    }
+    setRows(exceptions);
   };
 
   useEffect(() => {
@@ -1598,18 +1618,20 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
               <table className="w-full text-[12px] tabular">
                 <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold">Site</th>
-                    <th className="text-left px-3 py-2 font-semibold">Type</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
+                    <th className="text-left px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[140px]">Type</th>
                     <th className="text-left px-3 py-2 font-semibold">Note</th>
-                    <th className="text-left px-3 py-2 font-semibold">Source</th>
-                    <th className="text-left px-3 py-2 font-semibold">Reporter</th>
-                    <th className="px-3 py-2"></th>
+                    <th className="text-left px-3 py-2 font-semibold w-[80px]">Source</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Dept</th>
+                    <th className="px-3 py-2 w-[80px]"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
                   {rows.map((r) => (
                     <tr key={r.id}>
-                      <td className="px-3 py-1.5 font-semibold">{r.site_id}</td>
+                      <td className="px-3 py-1.5 font-semibold text-text-primary">{r.site_id}</td>
+                      <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
                       <td className="px-3 py-1.5">
                         <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-warning/15 text-warning">
                           {EXCEPTION_TYPES.find((t) => t.value === r.exception_type)?.label ?? r.exception_type}
