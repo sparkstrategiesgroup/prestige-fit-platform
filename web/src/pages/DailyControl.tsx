@@ -133,8 +133,20 @@ function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
     timeZone: "America/Chicago",
     weekday: "long", month: "long", day: "numeric",
   }).format(now).toUpperCase();
+  // 12-hour clock for each zone — "5:07:20 PM" instead of "17:07:20"
   const fmt = (iana: string) => new Intl.DateTimeFormat("en-US", {
-    timeZone: iana, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    timeZone: iana, hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+  }).format(now);
+  // Match the viewer's local wall-clock minute to each zone's wall-clock minute.
+  // Whichever matches (i.e. same UTC offset right now) gets highlighted as
+  // "your" zone. We compare to-the-minute so two zones at the same offset
+  // (e.g. Phoenix vs Denver in winter) still resolve correctly because the
+  // viewer's tz is what matters, not the IANA name.
+  const localHM = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(now);
+  const matchTz = (iana: string) => new Intl.DateTimeFormat("en-US", {
+    timeZone: iana, hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(now);
   return (
     <section
@@ -150,16 +162,28 @@ function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
         </span>
       </div>
       <div className="flex items-center gap-5 flex-wrap">
-        {TZ_STRIP.map((z) => (
-          <div key={z.iana} className="flex flex-col items-end">
-            <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-              {z.label}
-            </span>
-            <span className="text-[16px] font-bold text-text-primary tabular leading-none mt-0.5">
-              {fmt(z.iana)}
-            </span>
-          </div>
-        ))}
+        {TZ_STRIP.map((z) => {
+          const isLocal = matchTz(z.iana) === localHM;
+          return (
+            <div
+              key={z.iana}
+              className={`flex flex-col items-end px-2 py-1 rounded ${
+                isLocal ? "bg-warning/15 border border-warning/40" : ""
+              }`}
+            >
+              <span className={`text-[10px] font-semibold uppercase tracking-[0.06em] ${
+                isLocal ? "text-warning" : "text-text-muted"
+              }`}>
+                {z.label}{isLocal ? " · YOU" : ""}
+              </span>
+              <span className={`text-[16px] font-bold tabular leading-none mt-0.5 ${
+                isLocal ? "text-warning" : "text-text-primary"
+              }`}>
+                {fmt(z.iana)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </section>
   );
