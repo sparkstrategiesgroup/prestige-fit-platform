@@ -141,7 +141,7 @@ export default function DailyControl() {
     warnEs: string;
     clockedEn: string;
     clockedEs: string;
-    kind: "warning" | "clocked_out";
+    kinds: Array<"warning" | "clocked_out">;
     step: 1 | 2;
   } | null>(null);
 
@@ -274,22 +274,28 @@ export default function DailyControl() {
       warnEs: find("END_OF_SHIFT_WARNING", "es"),
       clockedEn: find("END_OF_SHIFT_CLOCKED_OUT", "en"),
       clockedEs: find("END_OF_SHIFT_CLOCKED_OUT", "es"),
-      kind: defaultKind,
+      kinds: [defaultKind],
       step: 1,
     });
   }
 
   async function confirmSend() {
     if (!confirm) return;
-    setRunning(confirm.block.id);
+    const blockId = confirm.block.id;
+    const kinds = confirm.kinds;
+    setRunning(blockId);
     setConfirm(null);
     try {
-      const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shift_block_id: confirm.block.id, kind: confirm.kind }),
-      });
-      await res.json();
+      // Fire one runner call per selected kind. Both can be picked at once,
+      // in which case each recipient gets the warning AND the clocked-out
+      // notice.
+      await Promise.all(kinds.map((k) =>
+        fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shift_block_id: blockId, kind: k }),
+        }).then((r) => r.json())
+      ));
     } finally {
       setRunning(null);
       refresh();
@@ -889,8 +895,16 @@ export default function DailyControl() {
           aria-modal="true"
         >
           {(() => {
-            const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
-            const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
+            const hasWarning  = confirm.kinds.includes("warning");
+            const hasClocked  = confirm.kinds.includes("clocked_out");
+            const messagesPerPerson = confirm.kinds.length * 2;
+            const totalTexts = confirm.recipients.length * messagesPerPerson;
+            const toggleKind = (k: "warning" | "clocked_out") => {
+              const next = confirm.kinds.includes(k)
+                ? confirm.kinds.filter((x) => x !== k)
+                : [...confirm.kinds, k];
+              setConfirm({ ...confirm, kinds: next });
+            };
             // Format the block's end_time_local ("11:00:00") as "11:00 AM CT".
             const [h, m] = (confirm.block.end_time_local ?? "00:00").split(":").map((n) => parseInt(n, 10));
             const endMinutes = h * 60 + m;
@@ -969,22 +983,32 @@ export default function DailyControl() {
                       </div>
                     </div>
 
-                    {/* Reminder type toggle */}
+                    {/* Reminder type toggle — multi-select */}
                     <div className="p-5 border-b border-border bg-bg/40 space-y-3">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                        Which reminder?
+                        Which reminder? <span className="text-text-secondary font-normal normal-case ml-2">(select one or both)</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
-                          onClick={() => setConfirm({ ...confirm, kind: "warning" })}
+                          onClick={() => toggleKind("warning")}
+                          aria-pressed={hasWarning}
                           className={`text-left border rounded-lg p-3 transition-colors ${
-                            confirm.kind === "warning"
-                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
-                              : "bg-surface border-border hover:border-warning"
+                            hasWarning
+                              ? "bg-blue-1/10 border-blue-1 ring-2 ring-blue-1/30"
+                              : "bg-surface border-border hover:border-blue-1"
                           }`}
                         >
-                          <div className="text-[13px] font-semibold text-text-primary">
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
+                            <span className={`inline-block w-3 h-3 rounded border ${
+                              hasWarning ? "bg-blue-1 border-blue-1" : "border-border bg-surface"
+                            }`} aria-hidden>
+                              {hasWarning && (
+                                <svg viewBox="0 0 12 12" className="w-full h-full text-white">
+                                  <path d="M2.5 6 L5 8.5 L9.5 3.5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </span>
                             15-minute reminder
                           </div>
                           <div className="text-[11px] text-text-muted mt-0.5">
@@ -993,14 +1017,24 @@ export default function DailyControl() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
+                          onClick={() => toggleKind("clocked_out")}
+                          aria-pressed={hasClocked}
                           className={`text-left border rounded-lg p-3 transition-colors ${
-                            confirm.kind === "clocked_out"
-                              ? "bg-good/10 border-good ring-2 ring-good/30"
-                              : "bg-surface border-border hover:border-good"
+                            hasClocked
+                              ? "bg-blue-1/10 border-blue-1 ring-2 ring-blue-1/30"
+                              : "bg-surface border-border hover:border-blue-1"
                           }`}
                         >
-                          <div className="text-[13px] font-semibold text-text-primary">
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
+                            <span className={`inline-block w-3 h-3 rounded border ${
+                              hasClocked ? "bg-blue-1 border-blue-1" : "border-border bg-surface"
+                            }`} aria-hidden>
+                              {hasClocked && (
+                                <svg viewBox="0 0 12 12" className="w-full h-full text-white">
+                                  <path d="M2.5 6 L5 8.5 L9.5 3.5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </span>
                             END SHIFT
                           </div>
                           <div className="text-[11px] text-text-muted mt-0.5">
@@ -1171,7 +1205,7 @@ export default function DailyControl() {
                           </span>
                           <button
                             onClick={() => setConfirm({ ...confirm, step: 2 })}
-                            disabled={confirm.recipients.length === 0}
+                            disabled={confirm.recipients.length === 0 || confirm.kinds.length === 0}
                             className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
                           >
                             Next: review messages →
@@ -1183,25 +1217,66 @@ export default function DailyControl() {
                     {/* ===== STEP 2: message preview + Send ===== */}
                     {confirm.step === 2 && (
                       <>
-                        <div className="px-5 py-4 border-t border-border bg-bg/40 grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                              <span>English preview</span>
-                              <span className="tabular text-text-secondary">{en.length} chars</span>
+                        <div className="overflow-y-auto flex-1 p-5 space-y-4 bg-bg/40">
+                          {hasWarning && (
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-blue-1 mb-2">
+                                15-minute reminder
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>English</span>
+                                    <span className="tabular">{confirm.warnEn.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.warnEn}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>Spanish</span>
+                                    <span className="tabular">{confirm.warnEs.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.warnEs}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                            <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                              {en}
+                          )}
+                          {hasClocked && (
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-blue-1 mb-2">
+                                END SHIFT
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>English</span>
+                                    <span className="tabular">{confirm.clockedEn.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.clockedEn}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>Spanish</span>
+                                    <span className="tabular">{confirm.clockedEs.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.clockedEs}
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <div>
-                            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                              <span>Spanish preview</span>
-                              <span className="tabular text-text-secondary">{es.length} chars</span>
+                          )}
+                          {!hasWarning && !hasClocked && (
+                            <div className="text-[12px] text-text-muted text-center">
+                              Pick a reminder type on step 1 to preview the message.
                             </div>
-                            <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                              {es}
-                            </div>
-                          </div>
+                          )}
                         </div>
 
                         <div className="p-5 border-t border-border flex items-center justify-between gap-2">
@@ -1217,11 +1292,10 @@ export default function DailyControl() {
                             </span>
                             <button
                               onClick={confirmSend}
-                              disabled={confirm.recipients.length === 0}
+                              disabled={confirm.recipients.length === 0 || confirm.kinds.length === 0}
                               className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
                             >
-                              Send {confirm.recipients.length * 2} text
-                              {confirm.recipients.length === 1 ? "" : "s"}
+                              Send {totalTexts} text{totalTexts === 1 ? "" : "s"}
                             </button>
                           </div>
                         </div>
