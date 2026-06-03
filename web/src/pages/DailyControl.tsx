@@ -205,6 +205,8 @@ export default function DailyControl() {
       message_body: string;
       sent_at: string;
     }>;
+    emailStatus: "pending" | "sent" | "failed" | "skipped";
+    emailDetail?: string;
   } | null>(null);
 
   async function refresh() {
@@ -386,10 +388,73 @@ export default function DailyControl() {
         sentAfter: startedAt,
         kinds,
         messages: (sent ?? []) as NonNullable<typeof sentReceipt>["messages"],
+        emailStatus: "pending",
       });
+      // Fire-and-forget summary email to Claudia. Result feeds the receipt
+      // modal banner so the operator can see it land (or fail) without
+      // blocking the rest of the UI.
+      if (sent && sent.length > 0) {
+        fetch(`${FUNCTIONS_URL}/notify-summary-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shift_block_id: blockId,
+            sent_after: startedAt,
+            block_label: blockLabel,
+          }),
+        })
+          .then(async (r) => {
+            const body = await r.json().catch(() => ({}));
+            setSentReceipt((prev) =>
+              prev && prev.blockId === blockId && prev.sentAfter === startedAt
+                ? { ...prev, emailStatus: r.ok ? "sent" : "failed",
+                    emailDetail: r.ok ? body.sent_to?.join(", ") : body.error ?? String(r.status) }
+                : prev,
+            );
+          })
+          .catch((err) => {
+            setSentReceipt((prev) =>
+              prev && prev.blockId === blockId && prev.sentAfter === startedAt
+                ? { ...prev, emailStatus: "failed", emailDetail: String(err) }
+                : prev,
+            );
+          });
+      } else {
+        setSentReceipt((prev) => prev ? { ...prev, emailStatus: "skipped" } : prev);
+      }
     } finally {
       setRunning(null);
       refresh();
+    }
+  }
+
+  // Manual trigger for the Power Automate summary-email flow. Same payload
+  // the auto-fire after a checkpoint uses; updates the modal banner so the
+  // operator sees the result.
+  async function emailClaudia(receipt: NonNullable<typeof sentReceipt>) {
+    setSentReceipt((prev) => prev ? { ...prev, emailStatus: "pending", emailDetail: undefined } : prev);
+    try {
+      const r = await fetch(`${FUNCTIONS_URL}/notify-summary-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_block_id: receipt.blockId,
+          sent_after: receipt.sentAfter,
+          block_label: receipt.blockLabel,
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+      setSentReceipt((prev) =>
+        prev ? {
+          ...prev,
+          emailStatus: r.ok ? "sent" : "failed",
+          emailDetail: r.ok ? body.sent_to?.join(", ") : body.error ?? String(r.status),
+        } : prev,
+      );
+    } catch (err) {
+      setSentReceipt((prev) =>
+        prev ? { ...prev, emailStatus: "failed", emailDetail: String(err) } : prev,
+      );
     }
   }
 
@@ -424,7 +489,7 @@ export default function DailyControl() {
     const header = [
       "JOBSITE ID","JOBSITE NAME","PAYROLL ID","EMPLOYEE NAME",
       "TIME IN (ACTUAL CT)","SCHEDULED IN CT","SCHEDULED OUT CT","SHIFT HOURS",
-      "RECIPIENT PHONE","LANGUAGE","TYPE","SENT AT CT","MESSAGE BODY",
+      "RECIPIENT PHONE","LANGUAGE","TYPE","SENT AT CT",
     ];
     const escape = (v: unknown) => {
       const s = v == null ? "" : String(v);
@@ -441,7 +506,6 @@ export default function DailyControl() {
           : r.notification_type === "END_OF_SHIFT_CLOCKED_OUT" ? "End shift"
           : r.notification_type,
         fmtCt(r.sent_at),
-        r.message_body,
       ].map(escape).join(",")),
     ].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
@@ -1503,6 +1567,12 @@ export default function DailyControl() {
               </div>
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() => emailClaudia(sentReceipt!)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg"
+                >
+                  Email Claudia
+                </button>
+                <button
                   onClick={() => downloadSentSummary(sentReceipt!)}
                   className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg"
                 >
@@ -1516,6 +1586,24 @@ export default function DailyControl() {
                 </button>
               </div>
             </div>
+            {sentReceipt.emailStatus && sentReceipt.messages.length > 0 && (
+              <div
+                className={`px-5 py-2 text-[12px] tabular border-b border-border ${
+                  sentReceipt.emailStatus === "sent"
+                    ? "bg-good/10 text-good"
+                    : sentReceipt.emailStatus === "failed"
+                      ? "bg-danger/10 text-danger"
+                      : "bg-bg text-text-secondary"
+                }`}
+              >
+                {sentReceipt.emailStatus === "pending" && "Emailing summary to Claudia…"}
+                {sentReceipt.emailStatus === "sent" &&
+                  `Email summary sent to ${sentReceipt.emailDetail ?? "Claudia"}.`}
+                {sentReceipt.emailStatus === "failed" &&
+                  `Email failed: ${sentReceipt.emailDetail ?? "unknown"}. Use Email Claudia to retry.`}
+                {sentReceipt.emailStatus === "skipped" && "Nothing to email — 0 messages sent."}
+              </div>
+            )}
             <div className="p-5">
               {sentReceipt.messages.length === 0 ? (
                 <p className="text-[13px] text-text-secondary">
