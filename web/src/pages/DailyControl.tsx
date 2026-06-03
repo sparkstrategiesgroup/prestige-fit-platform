@@ -925,6 +925,16 @@ export default function DailyControl() {
             return (
               <div className="bg-surface rounded-xl shadow-xl border border-border max-w-3xl w-full max-h-[90vh] flex flex-col">
                 <>
+                    {/* Step indicator */}
+                    <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] font-semibold">
+                      <span className={confirm.step === 1 ? "text-blue-1" : "text-text-muted"}>
+                        1. Sort
+                      </span>
+                      <span className="text-text-muted">→</span>
+                      <span className={confirm.step === 2 ? "text-blue-1" : "text-text-muted"}>
+                        2. Review messages
+                      </span>
+                    </div>
                     <div className="p-5 border-b border-border">
                       <div className="grid grid-cols-2 gap-4">
                         <div>
@@ -1000,7 +1010,8 @@ export default function DailyControl() {
                       </div>
                     </div>
 
-                    {/* Excluded + Exceptions — grouped */}
+                    {/* Excluded + Exceptions — step 1 only */}
+                    {confirm.step === 1 && (
                     <div className="overflow-y-auto p-5 flex-1 space-y-4">
                       {confirm.excluded.length === 0 ? (
                         <p className="text-[13px] text-text-muted">
@@ -1143,45 +1154,79 @@ export default function DailyControl() {
                         );
                       })()}
                     </div>
+                    )}
 
-                    {/* Message preview — always visible */}
-                    <div className="px-5 py-4 border-t border-border bg-bg/40 grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                          <span>English preview</span>
-                          <span className="tabular text-text-secondary">{en.length} chars</span>
-                        </div>
-                        <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                          {en}
+                    {/* ===== STEP 1 footer: Next ===== */}
+                    {confirm.step === 1 && (
+                      <div className="p-5 border-t border-border flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => setConfirm(null)}
+                          className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                        >
+                          Cancel
+                        </button>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[12px] text-text-secondary tabular">
+                            Step 1 of 2 · sort excluded + exceptions
+                          </span>
+                          <button
+                            onClick={() => setConfirm({ ...confirm, step: 2 })}
+                            disabled={confirm.recipients.length === 0}
+                            className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                          >
+                            Next: review messages →
+                          </button>
                         </div>
                       </div>
-                      <div>
-                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                          <span>Spanish preview</span>
-                          <span className="tabular text-text-secondary">{es.length} chars</span>
-                        </div>
-                        <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                          {es}
-                        </div>
-                      </div>
-                    </div>
+                    )}
 
-                    <div className="p-5 border-t border-border flex items-center justify-between gap-2">
-                      <button
-                        onClick={() => setConfirm(null)}
-                        className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={confirmSend}
-                        disabled={confirm.recipients.length === 0}
-                        className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
-                      >
-                        Send {confirm.recipients.length * 2} text
-                        {confirm.recipients.length === 1 ? "" : "s"}
-                      </button>
-                    </div>
+                    {/* ===== STEP 2: message preview + Send ===== */}
+                    {confirm.step === 2 && (
+                      <>
+                        <div className="px-5 py-4 border-t border-border bg-bg/40 grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                              <span>English preview</span>
+                              <span className="tabular text-text-secondary">{en.length} chars</span>
+                            </div>
+                            <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
+                              {en}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                              <span>Spanish preview</span>
+                              <span className="tabular text-text-secondary">{es.length} chars</span>
+                            </div>
+                            <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
+                              {es}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-5 border-t border-border flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => setConfirm({ ...confirm, step: 1 })}
+                            className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                          >
+                            ← Back
+                          </button>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[12px] text-text-secondary tabular">
+                              Step 2 of 2
+                            </span>
+                            <button
+                              onClick={confirmSend}
+                              disabled={confirm.recipients.length === 0}
+                              className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                            >
+                              Send {confirm.recipients.length * 2} text
+                              {confirm.recipients.length === 1 ? "" : "s"}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
                 </>
               </div>
             );
