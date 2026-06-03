@@ -21,9 +21,19 @@ type Row = {
 
 function fmtTime(t: string | null): string {
   if (!t) return "";
-  // Accept "HH:MM:SS" or ISO.
-  const d = t.length <= 8 ? new Date(`2000-01-01T${t}`) : new Date(t);
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  // expected_at is a local time-of-day ("HH:MM:SS"). Render it as-is, no TZ
+  // conversion — it's already in Central. arrived_at is full ISO → convert to CT.
+  if (t.length <= 8) {
+    const [hh, mm] = t.split(":");
+    const h = parseInt(hh, 10);
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${mm} ${ampm}`;
+  }
+  return new Date(t).toLocaleTimeString("en-US", {
+    timeZone: "America/Chicago",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
 }
 
 type Props = { refreshKey?: number };

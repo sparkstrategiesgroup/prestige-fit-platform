@@ -62,18 +62,25 @@ const FUNCTIONS_URL = `${
   import.meta.env.VITE_SUPABASE_URL ?? "https://sshhcpzleurztzksrlvr.supabase.co"
 }/functions/v1`;
 
+// All timestamps render in client (Central) time so a viewer in any browser
+// timezone sees the same ops clock as Claudia in Texas. Suffix "CT" makes the
+// reference frame explicit.
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "short",
-    timeStyle: "short",
-  });
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  }) + " CT";
 }
 
 // Same as fmtTime but drops the date — for tables where every row is "today".
 function fmtTimeOnly(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, { timeStyle: "short" });
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  });
 }
 
 

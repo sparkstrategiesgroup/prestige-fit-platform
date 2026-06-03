@@ -21,7 +21,11 @@ type Import = {
 
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" });
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  }) + " CT";
 }
 
 export default function Reports() {

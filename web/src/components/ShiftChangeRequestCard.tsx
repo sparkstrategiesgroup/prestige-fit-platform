@@ -302,11 +302,13 @@ export function ShiftChangeRequestCard() {
   const hrsToDeadline = Math.max(0, Math.floor(msToDeadline / 3_600_000));
   const daysToDeadline = Math.floor(hrsToDeadline / 24);
   const remainingHrs = hrsToDeadline % 24;
-  const deadlineLabel = deadline.toLocaleString(undefined, {
+  const deadlineLabel = deadline.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
     weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit",
-  });
-  const reminderLabel = reminderDay.toLocaleString(undefined, {
+  }) + " CT";
+  const reminderLabel = reminderDay.toLocaleString("en-US", {
+    timeZone: "America/Chicago",
     weekday: "short", month: "short", day: "numeric",
   });
   const inWindow = Date.now() >= reminderDay.getTime();
@@ -666,7 +668,10 @@ export function ShiftChangeRequestCard() {
                     return (
                       <tr key={r.id}>
                         <td className="px-3 py-1.5 text-text-secondary whitespace-nowrap">
-                          {new Date(r.uploaded_at).toLocaleTimeString(undefined, { timeStyle: "short" })}
+                          {new Date(r.uploaded_at).toLocaleTimeString("en-US", {
+                            timeZone: "America/Chicago",
+                            hour: "numeric", minute: "2-digit", hour12: true,
+                          })}
                         </td>
                         <td className="px-3 py-1.5">
                           <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
