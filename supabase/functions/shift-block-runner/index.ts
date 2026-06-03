@@ -50,16 +50,108 @@ async function eligibleRecipients(
   return (data ?? []) as Recipient[];
 }
 
-// Stub for the real Text Request send. Swap the body of this function with
-// an authenticated fetch() to Text Request's API once we have credentials.
+// Real Text Request send. Driven by Supabase env vars so the API key never
+// touches code/version control:
+//   TEXT_REQUEST_API_KEY     — required to enable real sending; if absent
+//                              the function falls back to the stub mode
+//                              (kept around for demos / offline dev).
+//   TEXT_REQUEST_ACCOUNT_ID  — TR account ID (e.g. "20349")
+//   TEXT_REQUEST_FROM_NUMBER — verified TR sending number (digits only)
+//   TEXT_REQUEST_BASE_URL    — defaults to https://api.textrequest.com.
+//                              Override if TR's API surface changes.
+//   TEST_RECIPIENT_PHONE     — when set, every send is rerouted to this
+//                              number (the real recipient is mentioned in
+//                              the message body so we can verify the loop
+//                              before flipping it to production).
+function digitsOnly(p: string): string {
+  return (p ?? "").replace(/\D/g, "");
+}
+
 async function sendViaTextRequest(
-  _phone: string,
-  _body: string,
-): Promise<{ provider: string; provider_message_id: string }> {
-  return {
-    provider: "TEXT_REQUEST_STUB",
-    provider_message_id: `STUB-${crypto.randomUUID()}`,
-  };
+  phone: string,
+  body: string,
+  recipientName: string,
+): Promise<{
+  provider: string;
+  provider_message_id: string;
+  recipient_address: string;
+  message_body: string;
+  delivery_status: string;
+  error?: string;
+}> {
+  const apiKey   = Deno.env.get("TEXT_REQUEST_API_KEY");
+  const accountId = Deno.env.get("TEXT_REQUEST_ACCOUNT_ID");
+  const fromNum   = Deno.env.get("TEXT_REQUEST_FROM_NUMBER");
+  const baseUrl   = Deno.env.get("TEXT_REQUEST_BASE_URL") ?? "https://api.textrequest.com";
+  const testTo    = Deno.env.get("TEST_RECIPIENT_PHONE");
+
+  // No credentials → keep the historical stub behavior so demos still work.
+  if (!apiKey || !accountId || !fromNum) {
+    return {
+      provider: "TEXT_REQUEST_STUB",
+      provider_message_id: `STUB-${crypto.randomUUID()}`,
+      recipient_address: phone,
+      message_body: body,
+      delivery_status: "sent",
+    };
+  }
+
+  const finalTo = testTo ? digitsOnly(testTo) : digitsOnly(phone);
+  const finalBody = testTo
+    ? `[TEST → would have gone to ${recipientName} ${phone}]\n${body}`
+    : body;
+
+  // POST /v2/accounts/{accountId}/messages
+  // Auth: Bearer <api_key>. Override TEXT_REQUEST_BASE_URL if TR's surface differs.
+  const url = `${baseUrl}/v2/accounts/${accountId}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: digitsOnly(fromNum),
+        to: finalTo,
+        message: finalBody,
+      }),
+    });
+    const respText = await res.text();
+    let parsed: Record<string, unknown> = {};
+    try { parsed = JSON.parse(respText); } catch { /* ignore */ }
+    if (!res.ok) {
+      return {
+        provider: "TEXT_REQUEST",
+        provider_message_id: `ERR-${crypto.randomUUID()}`,
+        recipient_address: finalTo,
+        message_body: finalBody,
+        delivery_status: "failed",
+        error: `${res.status} ${respText.slice(0, 200)}`,
+      };
+    }
+    const idCandidate =
+      (parsed.id as string | undefined) ??
+      (parsed.message_id as string | undefined) ??
+      (parsed.uuid as string | undefined) ??
+      `TR-${crypto.randomUUID()}`;
+    return {
+      provider: "TEXT_REQUEST",
+      provider_message_id: idCandidate,
+      recipient_address: finalTo,
+      message_body: finalBody,
+      delivery_status: "sent",
+    };
+  } catch (err) {
+    return {
+      provider: "TEXT_REQUEST",
+      provider_message_id: `ERR-${crypto.randomUUID()}`,
+      recipient_address: finalTo,
+      message_body: finalBody,
+      delivery_status: "failed",
+      error: (err as Error).message,
+    };
+  }
 }
 
 async function runOne(
@@ -88,20 +180,23 @@ async function runOne(
   const rows: Record<string, unknown>[] = [];
   for (const r of recipients) {
     for (const lang of ["en", "es"] as const) {
-      const send = await sendViaTextRequest(r.cell_phone, bodyFor[lang]);
+      const send = await sendViaTextRequest(r.cell_phone, bodyFor[lang], r.employee_name);
       rows.push({
         employee_id: r.employee_id,
         channel: "SMS",
         notification_type: TYPE_FOR_KIND[kind],
         recipient_type: "EMPLOYEE",
-        recipient_address: r.cell_phone,
-        message_body: bodyFor[lang],
+        // TEST_RECIPIENT_PHONE rerouting (if any) is reflected on the row so
+        // the receipt + CSV show exactly where the SMS actually went.
+        recipient_address: send.recipient_address,
+        message_body: send.message_body,
         language: lang,
         provider: send.provider,
         provider_message_id: send.provider_message_id,
         shift_block_id: shiftBlockId,
         scheduled_for: new Date().toISOString(),
-        delivery_status: "sent",
+        delivery_status: send.delivery_status,
+        delivery_error: send.error ?? null,
       });
     }
   }
