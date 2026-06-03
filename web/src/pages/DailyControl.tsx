@@ -1090,7 +1090,22 @@ export default function DailyControl() {
                               <ul className="divide-y divide-border">
                                 {Object.entries(groups)
                                   .sort((a, b) => b[1].length - a[1].length)
-                                  .map(([reason, list]) => (
+                                  .map(([reason, list]) => {
+                                    // Which column drove the exclusion? Used to
+                                    // highlight that cell in orange so the
+                                    // operator can immediately see why each row
+                                    // was filtered.
+                                    const r = reason.toLowerCase();
+                                    const highlight: "site" | "rate" | "time_in" | "time_out" | "employee" | "none" =
+                                      r.startsWith("store exception") ? "site" :
+                                      r === "already clocked out" ? "time_out" :
+                                      r === "lunch punch" ? "rate" :
+                                      r.startsWith("substitute") || r.startsWith("sub") ? "rate" :
+                                      r.startsWith("punch exception") ? "time_in" :
+                                      r === "manager / supervisor" || r === "employee not active" ? "employee" :
+                                      "none";
+                                    const hi = "bg-warning/15";
+                                    return (
                                     <li key={reason} className="text-[13px]">
                                       <details>
                                         <summary className="cursor-pointer flex items-baseline gap-2 px-4 py-2 hover:bg-bg/40">
@@ -1104,13 +1119,13 @@ export default function DailyControl() {
                                             <table className="w-full text-[12px] tabular border-collapse">
                                               <thead className="bg-bg">
                                                 <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
-                                                  <th className="px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
-                                                  <th className="px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                                                  <th className={`px-3 py-2 font-semibold w-[100px] ${highlight === "site" ? "bg-warning/20 text-warning" : ""}`}>Jobsite&nbsp;ID</th>
+                                                  <th className={`px-3 py-2 font-semibold ${highlight === "site" ? "bg-warning/20 text-warning" : ""}`}>Jobsite&nbsp;Name</th>
                                                   <th className="px-3 py-2 font-semibold w-[88px]">Payroll&nbsp;ID</th>
-                                                  <th className="px-3 py-2 font-semibold w-[200px]">Employee&nbsp;Name</th>
-                                                  <th className="px-3 py-2 font-semibold w-[80px]">Rate</th>
-                                                  <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;In</th>
-                                                  <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;Out</th>
+                                                  <th className={`px-3 py-2 font-semibold w-[200px] ${highlight === "employee" ? "bg-warning/20 text-warning" : ""}`}>Employee&nbsp;Name</th>
+                                                  <th className={`px-3 py-2 font-semibold w-[80px] ${highlight === "rate" ? "bg-warning/20 text-warning" : ""}`}>Rate</th>
+                                                  <th className={`px-3 py-2 font-semibold text-right w-[90px] ${highlight === "time_in" ? "bg-warning/20 text-warning" : ""}`}>Time&nbsp;In</th>
+                                                  <th className={`px-3 py-2 font-semibold text-right w-[90px] ${highlight === "time_out" ? "bg-warning/20 text-warning" : ""}`}>Time&nbsp;Out</th>
                                                 </tr>
                                               </thead>
                                               <tbody>
@@ -1124,11 +1139,11 @@ export default function DailyControl() {
                                                         i % 2 === 0 ? "bg-surface" : "bg-bg/40"
                                                       } border-t border-border/40`}
                                                     >
-                                                      <td className="px-3 py-1.5 text-text-primary font-semibold tabular">{c.site_id ?? "—"}</td>
-                                                      <td className="px-3 py-1.5 text-text-secondary">{c.job_site_name}</td>
+                                                      <td className={`px-3 py-1.5 text-text-primary font-semibold tabular ${highlight === "site" ? hi + " text-warning" : ""}`}>{c.site_id ?? "—"}</td>
+                                                      <td className={`px-3 py-1.5 text-text-secondary ${highlight === "site" ? hi : ""}`}>{c.job_site_name}</td>
                                                       <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
-                                                      <td className="px-3 py-1.5 text-text-primary whitespace-nowrap">{c.employee_name}</td>
-                                                      <td className="px-3 py-1.5">
+                                                      <td className={`px-3 py-1.5 text-text-primary whitespace-nowrap ${highlight === "employee" ? hi + " text-warning font-semibold" : ""}`}>{c.employee_name}</td>
+                                                      <td className={`px-3 py-1.5 ${highlight === "rate" ? hi : ""}`}>
                                                         {c.rate_type ? (
                                                           <span
                                                             className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide ${
@@ -1145,8 +1160,8 @@ export default function DailyControl() {
                                                           <span className="text-text-muted">—</span>
                                                         )}
                                                       </td>
-                                                      <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_in)}</td>
-                                                      <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_out)}</td>
+                                                      <td className={`px-3 py-1.5 text-right whitespace-nowrap ${highlight === "time_in" ? hi + " text-warning font-semibold" : "text-text-secondary"}`}>{fmtTimeOnly(c.time_in)}</td>
+                                                      <td className={`px-3 py-1.5 text-right whitespace-nowrap ${highlight === "time_out" ? hi + " text-warning font-semibold" : "text-text-secondary"}`}>{fmtTimeOnly(c.time_out)}</td>
                                                     </tr>
                                                   );
                                                 })}
@@ -1156,7 +1171,8 @@ export default function DailyControl() {
                                         </div>
                                       </details>
                                     </li>
-                                  ))}
+                                    );
+                                  })}
                               </ul>
                             )}
                           </div>
