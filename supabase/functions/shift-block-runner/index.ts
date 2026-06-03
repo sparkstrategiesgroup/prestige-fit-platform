@@ -217,8 +217,15 @@ async function blocksDueNow(
   return (data ?? []) as { id: number; kind: Kind }[];
 }
 
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 Deno.serve(async (req) => {
-  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
+  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: CORS });
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -256,6 +263,6 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({ runs }), {
     status: 200,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS, "Content-Type": "application/json" },
   });
 });
