@@ -105,8 +105,8 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                   onClick={() => setOpen(r)}
                   title={
                     got
-                      ? `${r.filename ?? ""}\n${r.row_count ?? 0} rows · arrived ${fmtTime(r.arrived_at)}`
-                      : `Expected ${fmtTime(r.expected_at)} — not yet received`
+                      ? `${r.filename ?? ""}\n${r.row_count ?? 0} rows · arrived ${fmtTime(r.arrived_at)} CT (ePay drops at ${fmtTime(r.expected_at)} CT)`
+                      : `Expected ePay drop at ${fmtTime(r.expected_at)} CT — not yet received`
                   }
                   className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] tabular cursor-pointer hover:opacity-80 transition-opacity ${
                     got
@@ -115,7 +115,7 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                   }`}
                 >
                   <span className="font-semibold">{got ? "✓" : "☐"}</span>
-                  <span>{fmtTime(r.expected_at)}</span>
+                  <span>{r.label}</span>
                   {got && <span className="text-text-muted">· {fmtTime(r.arrived_at)}</span>}
                 </button>
               );
@@ -136,16 +136,16 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
             <div className="p-5 border-b border-border flex items-start justify-between gap-4">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
-                  ePay report · {fmtTime(open.expected_at)} slot
+                  {open.label} · ePay drop expected {fmtTime(open.expected_at)} CT
                 </div>
                 <h2 className="text-[18px] font-bold text-text-primary mt-0.5">
                   {open.import_id === null
-                    ? `Not yet received — expected ${fmtTime(open.expected_at)}`
+                    ? `Not yet received — expected at ${fmtTime(open.expected_at)} CT`
                     : open.filename ?? "(no filename)"}
                 </h2>
                 {open.import_id !== null && (
                   <div className="text-[12px] text-text-secondary mt-1 tabular">
-                    Arrived {fmtTime(open.arrived_at)} ·{" "}
+                    Arrived {fmtTime(open.arrived_at)} CT ·{" "}
                     <strong className="text-text-primary">{open.row_count ?? 0}</strong> rows in file
                     {punches !== null && (
                       <>
