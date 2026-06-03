@@ -76,18 +76,6 @@ function fmtTimeOnly(iso: string | null) {
   return new Date(iso).toLocaleString(undefined, { timeStyle: "short" });
 }
 
-// "+15551083186" -> "(555) 108-3186"
-function fmtPhone(p: string | null): string {
-  if (!p) return "—";
-  const digits = p.replace(/\D/g, "");
-  if (digits.length === 11 && digits.startsWith("1")) {
-    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
-  }
-  if (digits.length === 10) {
-    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
-  }
-  return p;
-}
 
 // Current minute-of-day in Central Time. Most shift_blocks are anchored to
 // America/Chicago; this drives the "due now" highlight on the checkpoint grid.
@@ -1116,14 +1104,13 @@ export default function DailyControl() {
                                             <table className="w-full text-[12px] tabular border-collapse">
                                               <thead className="bg-bg">
                                                 <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
-                                                  <th className="px-3 py-2 font-semibold w-[88px]">Payroll #</th>
-                                                  <th className="px-3 py-2 font-semibold w-[200px]">Employee</th>
                                                   <th className="px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
                                                   <th className="px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                                                  <th className="px-3 py-2 font-semibold w-[88px]">Payroll&nbsp;ID</th>
+                                                  <th className="px-3 py-2 font-semibold w-[200px]">Employee&nbsp;Name</th>
                                                   <th className="px-3 py-2 font-semibold w-[80px]">Rate</th>
                                                   <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;In</th>
                                                   <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;Out</th>
-                                                  <th className="px-3 py-2 font-semibold text-right w-[130px]">Phone</th>
                                                 </tr>
                                               </thead>
                                               <tbody>
@@ -1137,10 +1124,10 @@ export default function DailyControl() {
                                                         i % 2 === 0 ? "bg-surface" : "bg-bg/40"
                                                       } border-t border-border/40`}
                                                     >
-                                                      <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
-                                                      <td className="px-3 py-1.5 text-text-primary whitespace-nowrap">{c.employee_name}</td>
                                                       <td className="px-3 py-1.5 text-text-primary font-semibold tabular">{c.site_id ?? "—"}</td>
                                                       <td className="px-3 py-1.5 text-text-secondary">{c.job_site_name}</td>
+                                                      <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
+                                                      <td className="px-3 py-1.5 text-text-primary whitespace-nowrap">{c.employee_name}</td>
                                                       <td className="px-3 py-1.5">
                                                         {c.rate_type ? (
                                                           <span
@@ -1160,7 +1147,6 @@ export default function DailyControl() {
                                                       </td>
                                                       <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_in)}</td>
                                                       <td className="px-3 py-1.5 text-right text-text-secondary whitespace-nowrap">{fmtTimeOnly(c.time_out)}</td>
-                                                      <td className="px-3 py-1.5 text-right text-text-muted whitespace-nowrap">{fmtPhone(c.cell_phone)}</td>
                                                     </tr>
                                                   );
                                                 })}
