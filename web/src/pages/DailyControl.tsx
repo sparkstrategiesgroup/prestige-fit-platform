@@ -1143,7 +1143,11 @@ export default function DailyControl() {
                                                       <td className={`px-3 py-1.5 text-text-primary whitespace-nowrap ${highlight === "employee" ? hi + " text-warning font-semibold" : ""}`}>{c.employee_name}</td>
                                                       <td className={`px-3 py-1.5 ${highlight === "rate" ? hi : ""}`}>
                                                         {c.rate_type ? (
-                                                          <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-bg text-text-secondary border border-border">
+                                                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border ${
+                                                            highlight === "rate"
+                                                              ? "bg-warning/20 text-warning border-warning/40"
+                                                              : "bg-bg text-text-secondary border-border"
+                                                          }`}>
                                                             {c.rate_type}
                                                           </span>
                                                         ) : (
