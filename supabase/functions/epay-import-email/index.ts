@@ -134,6 +134,34 @@ Deno.serve(async (req) => {
 
   const attachName = reportFile.name ?? "PunchesReport.xlsx";
 
+  // Dedup: PA retries the same email up to 3 times within 10 minutes. Without
+  // this short-circuit each retry creates a fresh epay_imports row and the
+  // labor_control_tracking upsert reassigns its epay_import_id to the latest
+  // one, orphaning earlier rows in the chip drill-in.
+  const { data: dupe } = await supabase
+    .from("epay_imports")
+    .select("id, completed_at")
+    .eq("file_sha256", sha)
+    .in("status", ["succeeded", "partial"])
+    .order("id", { ascending: false })
+    .limit(1);
+  if (dupe && dupe.length > 0) {
+    const firstImportId = dupe[0].id;
+    await supabase.from("email_imports").insert({
+      sender,
+      subject: body.subject ?? null,
+      received_at: body.received_at ?? null,
+      attachment_filename: attachName,
+      attachment_sha256: sha,
+      attachment_bytes: bytes.length,
+      status: "rejected",
+      rejection_reason: `Duplicate of epay_imports id ${firstImportId} (same file SHA-256)`,
+      epay_import_id: firstImportId,
+      completed_at: new Date().toISOString(),
+    });
+    return json(200, { skipped: "duplicate", existing_epay_import_id: firstImportId, sha });
+  }
+
   const { data: emailImport, error: emailErr } = await supabase
     .from("email_imports")
     .insert({
