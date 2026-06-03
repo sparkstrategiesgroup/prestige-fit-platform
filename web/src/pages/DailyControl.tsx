@@ -703,10 +703,7 @@ export default function DailyControl() {
                     {due ? "Due now" : "Next punch-out"}
                   </div>
                   <h2 className="text-[28px] font-bold text-text-primary leading-tight mt-1 tabular">
-                    {punchOut}
-                    <span className="text-[16px] font-normal text-text-secondary ml-3">
-                      {nextBlock.label}
-                    </span>
+                    {nextBlock.label.toUpperCase()}
                   </h2>
                   <div className="text-[14px] text-text-secondary mt-1 tabular">
                     {when}
