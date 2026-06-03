@@ -70,13 +70,14 @@ export function ShiftChangeRequestCard() {
   // The form mirrors the Excel SHIFT FORM: up to 15 shift rows per submission.
   type ShiftRow = {
     role: string;
+    employee: string;
     start: string;
     end: string;
     meal: string;   // minutes, kept as string so the cell can be blank
     days: string[]; // length 7, blank or number-as-string
   };
   const blankRow = (): ShiftRow => ({
-    role: "", start: "", end: "", meal: "", days: ["", "", "", "", "", "", ""],
+    role: "", employee: "", start: "", end: "", meal: "", days: ["", "", "", "", "", "", ""],
   });
   const [shiftRows, setShiftRows] = useState<ShiftRow[]>(() =>
     Array.from({ length: 15 }, blankRow),
@@ -126,6 +127,7 @@ export function ShiftChangeRequestCard() {
           role: string | null; days_of_week: boolean[] | null;
         }) => ({
           role: s.role ?? "",
+          employee: "",
           start: (s.start_time ?? "").slice(0, 5),
           end: (s.end_time ?? "").slice(0, 5),
           meal: s.flex_hours != null ? String(s.flex_hours) : "",
@@ -153,7 +155,7 @@ export function ShiftChangeRequestCard() {
             const start = `${String(Math.floor(startMins / 60)).padStart(2,"0")}:${String(startMins % 60).padStart(2,"0")}`;
             const days = (sb?.days_of_week ?? [false,true,true,true,true,true,false])
               .map((b) => b ? String(r.people_per_shift ?? 1) : "");
-            return { role: "", start, end, meal: "", days };
+            return { role: "", employee: "", start, end, meal: "", days };
           });
         }
       }
@@ -308,6 +310,7 @@ export function ShiftChangeRequestCard() {
           flex_hours: meal ? String(meal) : "",
           time_zone: "America/Chicago",
           role: r.role,
+          employee_name: r.employee || null,
         },
       };
     });
@@ -578,7 +581,8 @@ export function ShiftChangeRequestCard() {
                 <table className="w-full text-[12px] tabular border-collapse">
                   <thead className="bg-bg">
                     <tr>
-                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[140px]">Supervisor</th>
+                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[130px]">Role Type</th>
+                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[160px]">Employee Name</th>
                       <th colSpan={3} className="border border-border px-2 py-1 font-semibold text-text-secondary">Shift Times</th>
                       <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[70px]">Shift Total</th>
                       <th colSpan={7} className="border border-border px-2 py-1 font-semibold text-text-secondary">Minimum Number of People Required</th>
@@ -602,6 +606,12 @@ export function ShiftChangeRequestCard() {
                           <td className="border border-border p-0">
                             <input list="role-options" value={row.role}
                               onChange={(e) => updateRow(i, { role: e.target.value })}
+                              className="w-full px-2 py-1 text-[12px] bg-transparent" />
+                          </td>
+                          <td className="border border-border p-0">
+                            <input type="text" value={row.employee}
+                              onChange={(e) => updateRow(i, { employee: e.target.value })}
+                              placeholder=""
                               className="w-full px-2 py-1 text-[12px] bg-transparent" />
                           </td>
                           <td className="border border-border p-0">
