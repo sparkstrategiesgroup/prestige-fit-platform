@@ -193,7 +193,9 @@ export default function DailyControl() {
     step: 1 | 2;
   } | null>(null);
   const [sentReceipt, setSentReceipt] = useState<{
+    blockId: number;
     blockLabel: string;
+    sentAfter: string;
     kinds: Array<"warning" | "clocked_out">;
     messages: Array<{
       id: number;
@@ -379,7 +381,9 @@ export default function DailyControl() {
         .gte("sent_at", startedAt)
         .order("sent_at", { ascending: true });
       setSentReceipt({
+        blockId,
         blockLabel,
+        sentAfter: startedAt,
         kinds,
         messages: (sent ?? []) as NonNullable<typeof sentReceipt>["messages"],
       });
@@ -387,6 +391,67 @@ export default function DailyControl() {
       setRunning(null);
       refresh();
     }
+  }
+
+  // Build the post-send CSV: actual time_in vs scheduled in/out + shift hours
+  // for every employee we just texted. Pulled from fn_sent_summary_for_run.
+  async function downloadSentSummary(receipt: NonNullable<typeof sentReceipt>) {
+    const { data, error } = await supabase.rpc("fn_sent_summary_for_run", {
+      p_shift_block_id: receipt.blockId,
+      p_sent_after: receipt.sentAfter,
+    });
+    if (error || !data) {
+      alert(`Could not build CSV: ${error?.message ?? "no rows"}`);
+      return;
+    }
+    type Row = {
+      site_id: string; job_site_name: string;
+      payroll_number: string; employee_name: string;
+      recipient_phone: string; language: string;
+      notification_type: string; sent_at: string;
+      time_in: string | null; scheduled_in: string | null;
+      scheduled_out: string | null; shift_hours: number | string | null;
+      message_body: string;
+    };
+    const rows = data as Row[];
+    const fmtCt = (iso: string | null) => iso
+      ? new Date(iso).toLocaleString("en-US", {
+          timeZone: "America/Chicago",
+          hour: "2-digit", minute: "2-digit", hour12: false,
+        })
+      : "";
+    const fmtSchedTime = (t: string | null) => t ? t.slice(0, 5) : "";
+    const header = [
+      "JOBSITE ID","JOBSITE NAME","PAYROLL ID","EMPLOYEE NAME",
+      "TIME IN (ACTUAL CT)","SCHEDULED IN CT","SCHEDULED OUT CT","SHIFT HOURS",
+      "RECIPIENT PHONE","LANGUAGE","TYPE","SENT AT CT","MESSAGE BODY",
+    ];
+    const escape = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [
+      header.join(","),
+      ...rows.map((r) => [
+        r.site_id, r.job_site_name, r.payroll_number, r.employee_name,
+        fmtCt(r.time_in), fmtSchedTime(r.scheduled_in), fmtSchedTime(r.scheduled_out),
+        r.shift_hours ?? "",
+        r.recipient_phone, r.language,
+        r.notification_type === "END_OF_SHIFT_WARNING" ? "Warning"
+          : r.notification_type === "END_OF_SHIFT_CLOCKED_OUT" ? "End shift"
+          : r.notification_type,
+        fmtCt(r.sent_at),
+        r.message_body,
+      ].map(escape).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    a.download = `sent-${receipt.blockLabel.replace(/\s+/g, "")}-${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // Open-punch count per shift block, mapped via labor_control_tracking.
@@ -1436,12 +1501,20 @@ export default function DailyControl() {
                   ).join(" + ")}
                 </h2>
               </div>
-              <button
-                onClick={() => setSentReceipt(null)}
-                className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
-              >
-                Done
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => downloadSentSummary(sentReceipt!)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg"
+                >
+                  Download CSV
+                </button>
+                <button
+                  onClick={() => setSentReceipt(null)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  Done
+                </button>
+              </div>
             </div>
             <div className="p-5">
               {sentReceipt.messages.length === 0 ? (
