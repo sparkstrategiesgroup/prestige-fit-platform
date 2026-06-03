@@ -172,6 +172,9 @@ export default function DailyControl() {
   const [running, setRunning] = useState<number | null>(null);
   const [counts, setCounts] = useState({ total: 0, today: 0 });
   const [lastRun, setLastRun] = useState<string | null>(null);
+  const [latestImport, setLatestImport] = useState<{
+    id: number; filename: string; row_count: number | null; completed_at: string;
+  } | null>(null);
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [chainFilter, setChainFilter] = useState<string | null>(null);
   // The "next action" block + its eligible count, computed reactively as
@@ -232,6 +235,18 @@ export default function DailyControl() {
     setLct((l ?? []) as LCT[]);
     setCounts({ total: total ?? 0, today: today_ct ?? 0 });
     setLastRun(n && n.length ? n[0].sent_at : null);
+
+    // The "punches loaded" badge reflects the LAST ePay file the operator
+    // received — not the cumulative LCT total — so it matches what Claudia
+    // sees in the source workbook.
+    const { data: imp } = await supabase
+      .from("epay_imports")
+      .select("id, filename, row_count, completed_at")
+      .in("status", ["succeeded", "partial"])
+      .gte("started_at", new Date().toISOString().slice(0, 10))
+      .order("completed_at", { ascending: false })
+      .limit(1);
+    setLatestImport(imp && imp.length ? imp[0] : null);
   }
 
   useEffect(() => {
@@ -465,9 +480,11 @@ export default function DailyControl() {
     <>
       <HeaderBar
         title="Labor Control Tracking"
-        subtitle={lct.length > 0
-          ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
-          : "Track punches and outreach in real time"}
+        subtitle={latestImport
+          ? `${latestImport.row_count ?? 0} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+          : lct.length > 0
+            ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+            : "Track punches and outreach in real time"}
         right={
           <div className="flex items-center gap-2">
             {lastRun && (
@@ -564,7 +581,7 @@ export default function DailyControl() {
               {/* Secondary actions inline */}
               <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-text-secondary">
                 <a href="#todays-punches" className="hover:text-text-primary">
-                  {lct.length} punches loaded ↓
+                  {latestImport?.row_count ?? lct.length} punches loaded ↓
                 </a>
                 <span>·</span>
                 <a href="#store-exceptions" className="hover:text-text-primary">
