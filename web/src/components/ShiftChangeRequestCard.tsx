@@ -65,16 +65,24 @@ export function ShiftChangeRequestCard() {
   const [regionDept, setRegionDept] = useState("");
   const [siteId, setSiteId] = useState("");
   const [siteName, setSiteName] = useState("");
+  const [budgetWinteam, setBudgetWinteam] = useState<string>("");
 
-  // Shift definition
-  const [role, setRole] = useState("Custodian");
-  const [startTime, setStartTime] = useState("07:00");
-  const [endTime, setEndTime] = useState("15:30");
-  const [mealMinutes, setMealMinutes] = useState(30);
+  // The form mirrors the Excel SHIFT FORM: up to 15 shift rows per submission.
+  type ShiftRow = {
+    role: string;
+    start: string;
+    end: string;
+    meal: string;   // minutes, kept as string so the cell can be blank
+    days: string[]; // length 7, blank or number-as-string
+  };
+  const blankRow = (): ShiftRow => ({
+    role: "", start: "", end: "", meal: "", days: ["", "", "", "", "", "", ""],
+  });
+  const [shiftRows, setShiftRows] = useState<ShiftRow[]>(() =>
+    Array.from({ length: 15 }, blankRow),
+  );
+
   const [effective, setEffective] = useState(today);
-
-  // Per-day minimum number of people required (matches the Excel SHIFT FORM)
-  const [dayCounts, setDayCounts] = useState<number[]>([0, 1, 1, 1, 1, 1, 0]);
 
   // Operational metadata
   const [note, setNote] = useState("");
@@ -142,82 +150,64 @@ export function ShiftChangeRequestCard() {
     loadRecipients();
   };
 
-  // Computed: shift length in hours = (end - start - meal) / 60
-  const shiftHours = (() => {
-    const mins = timeToMinutes(endTime) - timeToMinutes(startTime) - (mealMinutes || 0);
+  // Per-row computed shift total = (end - start - meal) / 60
+  function rowShiftTotal(r: ShiftRow): number {
+    if (!r.start || !r.end) return 0;
+    const meal = parseInt(r.meal || "0", 10) || 0;
+    const mins = timeToMinutes(r.end) - timeToMinutes(r.start) - meal;
     return Math.max(0, mins / 60);
-  })();
-
-  // Computed: weekly total = sum of per-day counts × shift hours
-  const weeklyTotal = dayCounts.reduce((sum, c) => sum + c, 0) * shiftHours;
+  }
+  // Per-row weekly total = sum of day counts × shift total
+  function rowWeeklyTotal(r: ShiftRow): number {
+    const dayTotal = r.days.reduce((s, d) => s + (parseInt(d || "0", 10) || 0), 0);
+    return dayTotal * rowShiftTotal(r);
+  }
+  const totalWeeklyHours = shiftRows.reduce((s, r) => s + rowWeeklyTotal(r), 0);
 
   const reset = () => {
     setRegionDept("");
     setSiteId("");
     setSiteName("");
-    setRole("Custodian");
-    setStartTime("07:00");
-    setEndTime("15:30");
-    setMealMinutes(30);
+    setBudgetWinteam("");
+    setShiftRows(Array.from({ length: 15 }, blankRow));
     setEffective(today);
-    setDayCounts([0, 1, 1, 1, 1, 1, 0]);
     setNote("");
     setReporter("");
     setSource("phone");
     setError(null);
   };
 
-  const updateDayCount = (i: number, raw: string) => {
-    const n = Math.max(0, Math.min(99, parseInt(raw || "0", 10) || 0));
-    setDayCounts((d) => d.map((v, j) => (j === i ? n : v)));
+  const updateRow = (i: number, patch: Partial<ShiftRow>) => {
+    setShiftRows((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  };
+  const updateRowDay = (i: number, dayIdx: number, raw: string) => {
+    setShiftRows((rows) => rows.map((r, j) =>
+      j === i ? { ...r, days: r.days.map((d, k) => (k === dayIdx ? raw : d)) } : r,
+    ));
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!siteId.trim()) return setError("Job Site ID is required");
-    if (dayCounts.every((n) => n === 0)) return setError("Set headcount on at least one day");
+    if (!siteId.trim()) return setError("Store # is required");
+    const filledRows = shiftRows.filter(
+      (r) => r.role.trim() && r.start && r.end && r.days.some((d) => parseInt(d || "0", 10) > 0),
+    );
+    if (filledRows.length === 0) return setError("Add at least one shift row with role, times, and a day count");
 
     setSaving(true);
     setError(null);
 
     const site = siteId.trim().toUpperCase();
-    const newPayload = {
-      start_time: startTime + ":00",
-      end_time: endTime + ":00",
-      pre_arrival_adjustment: "",
-      post_arrival_adjustment: "",
-      pre_departure_adjustment: "",
-      post_departure_adjustment: "",
-      hours_type_id: "",
-      days_of_week: dayCounts.map((c) => c > 0),
-      // Capture the per-day counts and meal too so the bulk apply has the source.
-      day_counts: dayCounts,
-      meal_minutes: mealMinutes,
-      shift_total_hours: shiftHours,
-      weekly_total_hours: weeklyTotal,
-      min_holiday: "",
-      page_absence: false,
-      flex_hours: mealMinutes ? String(mealMinutes) : "",
-      pre_shift_tolerance: "",
-      post_shift_tolerance: "",
-      periodic_check: false,
-      pc_tolerance: "",
-      supervisor_id: "",
-      notify_contact: "",
-      page_no_show: false,
-      no_show_pager: "",
-      time_zone: "America/Chicago",
-      role,
-    };
-
     const tag = [
       MANUAL_TAG,
       regionDept.trim() ? `region/dept: ${regionDept.trim()}` : null,
       siteName.trim() ? `site: ${siteName.trim()}` : null,
+      budgetWinteam.trim() ? `budget: ${budgetWinteam.trim()}` : null,
       reporter.trim() ? `reporter: ${reporter.trim()}` : null,
       `source: ${source}`,
       `eff: ${effective}`,
-      `hours: ${shiftHours.toFixed(1)}/${weeklyTotal.toFixed(1)}`,
+      `rows: ${filledRows.length}`,
+      `weekly: ${totalWeeklyHours.toFixed(1)}`,
       note.trim() ? `note: ${note.trim()}` : null,
     ].filter(Boolean).join(" · ");
 
@@ -226,8 +216,8 @@ export function ShiftChangeRequestCard() {
       .insert({
         source_filename: tag,
         status: "pending",
-        slot_count: 1,
-        slots_added: 1,
+        slot_count: filledRows.length,
+        slots_added: filledRows.length,
         slots_modified: 0,
         slots_removed: 0,
         notes: note.trim() || null,
@@ -240,17 +230,32 @@ export function ShiftChangeRequestCard() {
       return;
     }
 
-    const natKey = `${site}|${startTime}:00|${endTime}:00|`;
-    const { error: changeErr } = await supabase
-      .from("master_schedule_change")
-      .insert({
+    const changes = filledRows.map((r) => {
+      const dayCounts = r.days.map((d) => parseInt(d || "0", 10) || 0);
+      const meal = parseInt(r.meal || "0", 10) || 0;
+      const shiftHours = rowShiftTotal(r);
+      const weeklyTotal = rowWeeklyTotal(r);
+      return {
         revision_id: rev.id,
         change_type: "add",
         site_id: site,
-        slot_natural_key: natKey,
-        new_payload: newPayload,
-      });
-
+        slot_natural_key: `${site}|${r.start}:00|${r.end}:00|`,
+        new_payload: {
+          start_time: r.start + ":00",
+          end_time: r.end + ":00",
+          hours_type_id: "",
+          days_of_week: dayCounts.map((c) => c > 0),
+          day_counts: dayCounts,
+          meal_minutes: meal,
+          shift_total_hours: shiftHours,
+          weekly_total_hours: weeklyTotal,
+          flex_hours: meal ? String(meal) : "",
+          time_zone: "America/Chicago",
+          role: r.role,
+        },
+      };
+    });
+    const { error: changeErr } = await supabase.from("master_schedule_change").insert(changes);
     if (changeErr) {
       setError(changeErr.message);
       setSaving(false);
@@ -460,163 +465,152 @@ export function ShiftChangeRequestCard() {
           {showAdd && (
             <form
               onSubmit={submit}
-              className="bg-bg/50 border border-border rounded-lg p-4 space-y-4"
+              className="bg-white border border-border rounded-lg p-6 space-y-5"
             >
-              {/* Identification block */}
-              <div className="grid gap-3 sm:grid-cols-3">
-                <label className="text-[12px] font-medium text-text-secondary">
-                  Region / Dept #
-                  <input
-                    type="text"
-                    value={regionDept}
-                    onChange={(e) => setRegionDept(e.target.value)}
-                    placeholder="e.g. 4006"
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
-                  />
-                </label>
-                <label className="text-[12px] font-medium text-text-secondary">
-                  Job Site ID *
-                  <input
-                    type="text"
-                    value={siteId}
-                    onChange={(e) => setSiteId(e.target.value)}
-                    placeholder="H3014 / T0067 / KOH0130"
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular font-semibold uppercase"
-                    autoFocus
-                  />
-                </label>
-                <label className="text-[12px] font-medium text-text-secondary">
-                  Job Site Name
-                  <input
-                    type="text"
-                    value={siteName}
-                    readOnly
-                    placeholder="(auto-fills from Site ID)"
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-bg/40 text-text-secondary"
-                  />
-                </label>
-                <label className="text-[12px] font-medium text-text-secondary">
-                  Effective Date
-                  <input
-                    type="date"
-                    value={effective}
-                    onChange={(e) => setEffective(e.target.value)}
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
-                  />
-                </label>
-                <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
-                  Supervisor / Role
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
-                  >
-                    {LABOR_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </label>
+              <div className="text-center">
+                <h3 className="text-[22px] font-bold tracking-wide text-text-primary">SHIFT FORM</h3>
+                <p className="text-[12px] text-text-secondary mt-1 italic">
+                  Please complete this form for each store any time there is a new shift or shift change
+                  (the number of employees change or shift time changes).
+                </p>
               </div>
 
-              {/* Shift times block */}
-              <div className="border-t border-border pt-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                  Shift times
+              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+                <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">Region/Dept #:</span>
+                  <input type="text" value={regionDept}
+                    onChange={(e) => setRegionDept(e.target.value)}
+                    placeholder="4006"
+                    className="border border-border rounded px-2 py-1 text-[13px] tabular bg-yellow-50" />
                 </div>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-                  <label className="text-[12px] font-medium text-text-secondary">
-                    Start
-                    <input
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
-                    />
-                  </label>
-                  <label className="text-[12px] font-medium text-text-secondary">
-                    End
-                    <input
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
-                    />
-                  </label>
-                  <label className="text-[12px] font-medium text-text-secondary">
-                    Meal (min)
-                    <input
-                      type="number"
-                      min={0}
-                      max={120}
-                      value={mealMinutes}
-                      onChange={(e) => setMealMinutes(Math.max(0, parseInt(e.target.value || "0", 10) || 0))}
-                      className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
-                    />
-                  </label>
-                  <div className="text-[12px] font-medium text-text-secondary">
-                    Shift Total
-                    <div className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular bg-bg/40 font-semibold">
-                      {shiftHours.toFixed(2)} hrs
-                    </div>
+                <div className="grid grid-cols-[160px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">BUDGET IN WINTEAM:</span>
+                  <input type="number" min={0} value={budgetWinteam}
+                    onChange={(e) => setBudgetWinteam(e.target.value)}
+                    placeholder="35"
+                    className="border border-border rounded px-2 py-1 text-[13px] tabular bg-yellow-50" />
+                </div>
+                <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">Store #:</span>
+                  <input type="text" value={siteId}
+                    onChange={(e) => setSiteId(e.target.value)}
+                    placeholder="H3014"
+                    className="border border-border rounded px-2 py-1 text-[13px] tabular font-semibold uppercase bg-yellow-50"
+                    autoFocus />
+                </div>
+                <div className="grid grid-cols-[160px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">Total Weekly Hours:</span>
+                  <div className="border border-border rounded px-2 py-1 text-[13px] tabular bg-bg/40 font-semibold">
+                    {totalWeeklyHours.toFixed(1)}
                   </div>
                 </div>
+                <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">Effective Date:</span>
+                  <input type="date" value={effective}
+                    onChange={(e) => setEffective(e.target.value)}
+                    className="border border-border rounded px-2 py-1 text-[13px] tabular bg-yellow-50" />
+                </div>
+                {siteName && (
+                  <div className="grid grid-cols-[140px_1fr] items-center gap-2">
+                    <span className="text-[12px] font-semibold text-text-secondary text-right">Store Name:</span>
+                    <div className="text-[13px] text-text-secondary">{siteName}</div>
+                  </div>
+                )}
               </div>
 
-              {/* Minimum people per day */}
-              <div className="border-t border-border pt-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                  Minimum number of people required
-                </div>
-                <div className="grid gap-2 grid-cols-7">
-                  {DAYS.map((d, i) => (
-                    <label key={d} className="text-[11px] font-medium text-text-secondary text-center">
-                      {d}
-                      <input
-                        type="number"
-                        min={0}
-                        max={99}
-                        value={dayCounts[i]}
-                        onChange={(e) => updateDayCount(i, e.target.value)}
-                        className="mt-1 w-full border border-border rounded px-2 py-2 text-[13px] tabular text-center"
-                      />
-                    </label>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-center justify-end gap-2 text-[12px] tabular">
-                  <span className="text-text-secondary">Weekly Total:</span>
-                  <span className="font-semibold text-text-primary text-[14px]">
-                    {weeklyTotal.toFixed(2)} hrs
-                  </span>
-                </div>
+              <div className="overflow-x-auto border border-border rounded">
+                <table className="w-full text-[12px] tabular border-collapse">
+                  <thead className="bg-bg">
+                    <tr>
+                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[140px]">Supervisor</th>
+                      <th colSpan={3} className="border border-border px-2 py-1 font-semibold text-text-secondary">Shift Times</th>
+                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[70px]">Shift Total</th>
+                      <th colSpan={7} className="border border-border px-2 py-1 font-semibold text-text-secondary">Minimum Number of People Required</th>
+                      <th rowSpan={2} className="border border-border px-2 py-1 font-semibold text-text-secondary w-[70px]">Weekly Total</th>
+                    </tr>
+                    <tr>
+                      <th className="border border-border px-2 py-1 font-medium text-text-secondary w-[80px]">Start</th>
+                      <th className="border border-border px-2 py-1 font-medium text-text-secondary w-[80px]">End</th>
+                      <th className="border border-border px-2 py-1 font-medium text-text-secondary w-[60px]">Meal</th>
+                      {DAYS.map((d) => (
+                        <th key={d} className="border border-border px-2 py-1 font-medium text-text-secondary w-[50px]">{d}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shiftRows.map((row, i) => {
+                      const total = rowShiftTotal(row);
+                      const weekly = rowWeeklyTotal(row);
+                      return (
+                        <tr key={i} className="bg-yellow-50">
+                          <td className="border border-border p-0">
+                            <input list="role-options" value={row.role}
+                              onChange={(e) => updateRow(i, { role: e.target.value })}
+                              className="w-full px-2 py-1 text-[12px] bg-transparent" />
+                          </td>
+                          <td className="border border-border p-0">
+                            <input type="time" value={row.start}
+                              onChange={(e) => updateRow(i, { start: e.target.value })}
+                              className="w-full px-1 py-1 text-[12px] tabular bg-transparent" />
+                          </td>
+                          <td className="border border-border p-0">
+                            <input type="time" value={row.end}
+                              onChange={(e) => updateRow(i, { end: e.target.value })}
+                              className="w-full px-1 py-1 text-[12px] tabular bg-transparent" />
+                          </td>
+                          <td className="border border-border p-0">
+                            <input type="number" min={0} max={120} value={row.meal}
+                              onChange={(e) => updateRow(i, { meal: e.target.value })}
+                              className="w-full px-1 py-1 text-[12px] tabular bg-transparent text-center" />
+                          </td>
+                          <td className="border border-border px-2 py-1 text-center text-text-primary font-semibold bg-bg/40">
+                            {total.toFixed(1)}
+                          </td>
+                          {row.days.map((d, k) => (
+                            <td key={k} className="border border-border p-0">
+                              <input type="number" min={0} max={99} value={d}
+                                onChange={(e) => updateRowDay(i, k, e.target.value)}
+                                className="w-full px-1 py-1 text-[12px] tabular bg-transparent text-center" />
+                            </td>
+                          ))}
+                          <td className="border border-border px-2 py-1 text-center text-text-primary font-semibold bg-bg/40">
+                            {weekly.toFixed(1)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                <datalist id="role-options">
+                  {LABOR_TYPES.map((t) => <option key={t} value={t} />)}
+                </datalist>
               </div>
 
-              {/* Operational metadata */}
-              <div className="border-t border-border pt-3 grid gap-3 sm:grid-cols-3">
-                <label className="text-[12px] font-medium text-text-secondary sm:col-span-3">
-                  Note
-                  <input
-                    type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder='"Joe out Thu; Marcia covering. New shift starts 6/9."'
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
-                  />
-                </label>
-                <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
+              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 pt-2">
+                <label className="text-[12px] font-semibold text-text-secondary">
                   Requestor / CE Team Member
-                  <input
-                    type="text"
-                    value={reporter}
+                  <input type="text" value={reporter}
                     onChange={(e) => setReporter(e.target.value)}
-                    placeholder="Site supervisor / your name"
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
-                  />
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-yellow-50" />
                 </label>
-                <label className="text-[12px] font-medium text-text-secondary">
+                <label className="text-[12px] font-semibold text-text-secondary">
+                  Date Completed
+                  <div className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] tabular bg-yellow-50">
+                    {today}
+                  </div>
+                </label>
+                <label className="text-[12px] font-semibold text-text-secondary sm:col-span-2">
+                  Note (optional)
+                  <input type="text" value={note}
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder='Joe out Thu; Marcia covering. New shift starts 6/9.'
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px]" />
+                </label>
+                <label className="text-[12px] font-semibold text-text-secondary">
                   Source
-                  <select
-                    value={source}
+                  <select value={source}
                     onChange={(e) => setSource(e.target.value)}
-                    className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
-                  >
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface">
                     <option value="phone">Phone</option>
                     <option value="sms">SMS / Text</option>
                     <option value="email">Email</option>
@@ -625,11 +619,17 @@ export function ShiftChangeRequestCard() {
                 </label>
               </div>
 
-              {error && (
-                <div className="text-[12px] text-danger">{error}</div>
-              )}
+              <div className="bg-bg/60 border border-border rounded p-3 text-[12px] text-text-secondary">
+                <div className="font-bold text-text-primary mb-1">Office Use Only:</div>
+                <ul className="list-disc pl-5 space-y-0.5">
+                  <li>Notify SDO for approval if requesting daily overtime on schedule.</li>
+                  <li>SDO must approve any labor pattern change — INCREASE in number of hours per week.</li>
+                </ul>
+              </div>
 
-              <div className="flex justify-end gap-2">
+              {error && <div className="text-[12px] text-danger">{error}</div>}
+
+              <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
                   onClick={() => { setShowAdd(false); reset(); }}
