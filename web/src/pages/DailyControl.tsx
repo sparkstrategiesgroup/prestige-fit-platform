@@ -1135,7 +1135,7 @@ export default function DailyControl() {
                                                       key={c.payroll_number + c.employee_name}
                                                       className={`${
                                                         highlight !== "none"
-                                                          ? "bg-warning/10"
+                                                          ? "bg-warning/15"
                                                           : i % 2 === 0 ? "bg-surface" : "bg-bg/40"
                                                       } border-t border-border/40`}
                                                     >
