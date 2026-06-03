@@ -109,6 +109,55 @@ function statusFor(block: ShiftBlock, ctNow: number): { status: BlockStatus; min
   return { status: "future", minsAway };
 }
 
+const TZ_STRIP = [
+  { label: "ET", iana: "America/New_York" },
+  { label: "CT", iana: "America/Chicago" },
+  { label: "MT", iana: "America/Denver" },
+  { label: "PT", iana: "America/Los_Angeles" },
+];
+
+function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "long", month: "long", day: "numeric",
+  }).format(now).toUpperCase();
+  const fmt = (iana: string) => new Intl.DateTimeFormat("en-US", {
+    timeZone: iana, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).format(now);
+  return (
+    <section
+      aria-label="Current operating date and time across regions"
+      className="sticky top-0 z-20 bg-surface border border-border rounded-xl px-5 py-3 flex items-center justify-between gap-6 flex-wrap shadow-sm"
+    >
+      <div className="flex flex-col">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Today · Central
+        </span>
+        <span className="text-[20px] font-bold text-text-primary leading-tight">
+          {dateLabel}
+        </span>
+      </div>
+      <div className="flex items-center gap-5 flex-wrap">
+        {TZ_STRIP.map((z) => (
+          <div key={z.iana} className="flex flex-col items-end">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+              {z.label}
+            </span>
+            <span className="text-[16px] font-bold text-text-primary tabular leading-none mt-0.5">
+              {fmt(z.iana)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function DailyControl() {
   const [blocks, setBlocks] = useState<ShiftBlock[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -410,6 +459,7 @@ export default function DailyControl() {
       />
 
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
+        <DateClockBar ctNow={ctNow} />
         <EpayReportChecklist refreshKey={lct.length} />
 
         {/* ============================================================== */}
