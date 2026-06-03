@@ -551,7 +551,7 @@ export default function DailyControl() {
                 </div>
                 <button
                   onClick={() => previewBlock(nextBlock)}
-                  disabled={!!running || count === 0}
+                  disabled={!!running}
                   className={`text-[15px] font-semibold px-6 py-3 rounded-lg transition-colors disabled:opacity-50 ${
                     due
                       ? "bg-warning text-white hover:opacity-90"
