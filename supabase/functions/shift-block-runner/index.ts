@@ -82,7 +82,8 @@ async function sendViaTextRequest(
   const apiKey   = Deno.env.get("TEXT_REQUEST_API_KEY");
   const accountId = Deno.env.get("TEXT_REQUEST_ACCOUNT_ID");
   const fromNum   = Deno.env.get("TEXT_REQUEST_FROM_NUMBER");
-  const baseUrl   = Deno.env.get("TEXT_REQUEST_BASE_URL") ?? "https://api.textrequest.com";
+  const baseUrl   = Deno.env.get("TEXT_REQUEST_BASE_URL") ?? "https://www.textrequest.com/api/v3";
+  const sendPath  = Deno.env.get("TEXT_REQUEST_SEND_PATH") ?? "/{accountId}/messages";
   const testTo    = Deno.env.get("TEST_RECIPIENT_PHONE");
 
   // No credentials → keep the historical stub behavior so demos still work.
@@ -101,15 +102,14 @@ async function sendViaTextRequest(
     ? `[TEST → would have gone to ${recipientName} ${phone}]\n${body}`
     : body;
 
-  // POST /v2/accounts/{accountId}/messages
-  // Auth: Bearer <api_key>. Override TEXT_REQUEST_BASE_URL if TR's surface differs.
-  const url = `${baseUrl}/v2/accounts/${accountId}/messages`;
+  const url = `${baseUrl}${sendPath.replace("{accountId}", accountId)}`;
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        "Accept": "application/json",
       },
       body: JSON.stringify({
         from: digitsOnly(fromNum),
@@ -121,13 +121,14 @@ async function sendViaTextRequest(
     let parsed: Record<string, unknown> = {};
     try { parsed = JSON.parse(respText); } catch { /* ignore */ }
     if (!res.ok) {
+      // Capture URL + status + raw body so we can diagnose endpoint/auth issues.
       return {
         provider: "TEXT_REQUEST",
         provider_message_id: `ERR-${crypto.randomUUID()}`,
         recipient_address: finalTo,
         message_body: finalBody,
         delivery_status: "failed",
-        error: `${res.status} ${respText.slice(0, 200)}`,
+        error: `${res.status} url=${url} body=${respText.slice(0, 400)}`,
       };
     }
     const idCandidate =
