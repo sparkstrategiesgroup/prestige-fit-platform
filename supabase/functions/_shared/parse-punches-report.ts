@@ -153,9 +153,11 @@ export async function ingestWorkbookBytes(
     }
 
     let shiftBlockId: number | null = null;
-    const { data: schedRow } = await supabase.from("job_site_schedules")
-      .select("shift_block_id").eq("job_site_id", site.id).eq("active", true).maybeSingle();
-    if (schedRow) shiftBlockId = schedRow.shift_block_id;
+    const { data: pickedBlock } = await supabase.rpc("fn_pick_shift_block", {
+      p_job_site_id: site.id,
+      p_time_in: timeIn,
+    });
+    if (typeof pickedBlock === "number") shiftBlockId = pickedBlock;
 
     const { error } = await supabase.from("labor_control_tracking").upsert({
       job_site_id: site.id,
