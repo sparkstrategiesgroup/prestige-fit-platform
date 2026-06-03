@@ -671,10 +671,6 @@ export default function DailyControl() {
         {/* ============================================================== */}
         {nextBlock && (() => {
           const status = statusFor(nextBlock, ctNow);
-          const [bh, bm] = nextBlock.end_time_local.split(":").map(Number);
-          const ampm = bh >= 12 ? "PM" : "AM";
-          const h12 = bh % 12 === 0 ? 12 : bh % 12;
-          const punchOut = `${h12}:${String(bm).padStart(2, "0")} ${ampm} CT`;
           // Time-to label
           const mins = status.minsAway;
           let when: string;
