@@ -142,14 +142,16 @@ export function ShiftChangeRequestCard() {
         if (jss && jss.length > 0) {
           rowsForForm = jss.map((r: {
             scheduled_out_local: string; scheduled_hours: number; people_per_shift: number;
-            shift_blocks: { end_time_local: string; days_of_week: boolean[] | null } | null;
+            shift_blocks: Array<{ end_time_local: string; days_of_week: boolean[] | null }>
+              | { end_time_local: string; days_of_week: boolean[] | null } | null;
           }) => {
-            const end = (r.scheduled_out_local ?? r.shift_blocks?.end_time_local ?? "").slice(0, 5);
+            const sb = Array.isArray(r.shift_blocks) ? r.shift_blocks[0] : r.shift_blocks;
+            const end = (r.scheduled_out_local ?? sb?.end_time_local ?? "").slice(0, 5);
             const [eh, em] = end.split(":").map(Number);
             const endMins = (eh ?? 0) * 60 + (em ?? 0);
             const startMins = Math.max(0, endMins - Math.round((r.scheduled_hours ?? 8) * 60));
             const start = `${String(Math.floor(startMins / 60)).padStart(2,"0")}:${String(startMins % 60).padStart(2,"0")}`;
-            const days = (r.shift_blocks?.days_of_week ?? [false,true,true,true,true,true,false])
+            const days = (sb?.days_of_week ?? [false,true,true,true,true,true,false])
               .map((b) => b ? String(r.people_per_shift ?? 1) : "");
             return { role: "", start, end, meal: "", days };
           });
