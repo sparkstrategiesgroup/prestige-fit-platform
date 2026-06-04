@@ -3,6 +3,7 @@ import { HeaderBar } from "../components/HeaderBar";
 import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
 import { supabase } from "../lib/supabase";
+import * as XLSX from "xlsx";
 
 type ShiftBlock = {
   id: number;
@@ -46,6 +47,15 @@ type Candidate = {
   rate_type: string | null;
   status: "ELIGIBLE" | "EXCLUDED";
   reason: string | null;
+};
+
+type ShortStaff = {
+  id: number;
+  store_code: string;
+  site_name: string | null;
+  notes: string | null;
+  department: string | null;
+  exception_date: string;
 };
 
 const FUNCTIONS_URL = `${
@@ -114,6 +124,104 @@ export default function DailyControl() {
     kind: "warning" | "clocked_out";
   } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const ssFileRef = useRef<HTMLInputElement>(null);
+
+  const [shortStaff, setShortStaff] = useState<ShortStaff[]>([]);
+  const [ssUploading, setSsUploading] = useState(false);
+  const [ssStatus, setSsStatus] = useState("");
+  const [ssAdding, setSsAdding] = useState(false);
+  const [ssForm, setSsForm] = useState({ store_code: "", site_name: "", notes: "", department: "" });
+
+  async function refreshShortStaff() {
+    const { data } = await supabase
+      .from("short_staff_exception")
+      .select("id,store_code,site_name,notes,department,exception_date")
+      .eq("exception_date", new Date().toISOString().slice(0, 10))
+      .order("store_code");
+    setShortStaff((data ?? []) as ShortStaff[]);
+  }
+
+  async function handleSsUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSsUploading(true);
+    setSsStatus(`Uploading ${file.name}…`);
+    try {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
+        header: 1,
+        raw: true,
+        blankrows: false,
+      });
+      const headerRow = rows.findIndex((r) =>
+        String(r[0] ?? "").trim().toLowerCase().startsWith("store")
+      );
+      if (headerRow === -1) {
+        setSsStatus("Could not find header row with 'Store #'");
+        return;
+      }
+      const today = new Date().toISOString().slice(0, 10);
+      const inserts: Record<string, unknown>[] = [];
+      for (let i = headerRow + 1; i < rows.length; i++) {
+        const row = rows[i];
+        const code = String(row[0] ?? "").trim();
+        if (!code) continue;
+        inserts.push({
+          store_code: code,
+          notes: String(row[1] ?? "").trim() || null,
+          site_name: String(row[2] ?? "").trim() || null,
+          department: String(row[3] ?? "").trim() || null,
+          exception_date: today,
+        });
+      }
+      if (inserts.length === 0) {
+        setSsStatus("No data rows found after header");
+        return;
+      }
+      const { error } = await supabase
+        .from("short_staff_exception")
+        .upsert(inserts, { onConflict: "store_code,exception_date" });
+      if (error) {
+        setSsStatus(`Failed: ${error.message}`);
+      } else {
+        setSsStatus(`Imported ${inserts.length} exception${inserts.length === 1 ? "" : "s"}`);
+      }
+    } catch (err) {
+      setSsStatus(`Failed: ${(err as Error).message}`);
+    } finally {
+      setSsUploading(false);
+      if (ssFileRef.current) ssFileRef.current.value = "";
+      await refreshShortStaff();
+    }
+  }
+
+  async function addShortStaff() {
+    if (!ssForm.store_code.trim()) return;
+    const { error } = await supabase.from("short_staff_exception").upsert(
+      {
+        store_code: ssForm.store_code.trim(),
+        site_name: ssForm.site_name.trim() || null,
+        notes: ssForm.notes.trim() || null,
+        department: ssForm.department.trim() || null,
+        exception_date: new Date().toISOString().slice(0, 10),
+      },
+      { onConflict: "store_code,exception_date" },
+    );
+    if (error) {
+      setSsStatus(`Failed: ${error.message}`);
+    } else {
+      setSsForm({ store_code: "", site_name: "", notes: "", department: "" });
+      setSsAdding(false);
+    }
+    await refreshShortStaff();
+  }
+
+  async function deleteShortStaff(id: number) {
+    await supabase.from("short_staff_exception").delete().eq("id", id);
+    await refreshShortStaff();
+  }
 
   async function refresh() {
     const today = new Date();
@@ -167,6 +275,7 @@ export default function DailyControl() {
       .order("end_time_local")
       .then(({ data }) => setBlocks((data ?? []) as ShiftBlock[]));
     refresh();
+    refreshShortStaff();
   }, []);
 
   async function authHeaders(): Promise<Record<string, string>> {
@@ -745,6 +854,150 @@ export default function DailyControl() {
               </table>
             </div>
           )}
+          </section>
+        </details>
+
+        {/* Short Staff Exceptions */}
+        <details className="bg-surface border border-border rounded-xl" open={shortStaff.length > 0}>
+          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
+            <span>Short Staff Exceptions ({shortStaff.length})</span>
+            <span className="text-blue-1 text-[11px]">click to {shortStaff.length > 0 ? "collapse" : "expand"}</span>
+          </summary>
+          <section className="px-5 pb-5">
+            <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+              <p className="text-[13px] text-text-secondary">
+                Stores flagged short-staffed today. Upload the .xlsx or add manually.
+              </p>
+              <div className="flex items-center gap-2">
+                <label className="cursor-pointer text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors">
+                  {ssUploading ? "Uploading…" : "Upload .xlsx"}
+                  <input
+                    ref={ssFileRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    onChange={handleSsUpload}
+                    disabled={ssUploading}
+                    className="hidden"
+                  />
+                </label>
+                <button
+                  onClick={() => setSsAdding(true)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  + Add
+                </button>
+              </div>
+            </div>
+            {ssStatus && (
+              <div className="mb-3 text-[13px] text-text-secondary tabular">{ssStatus}</div>
+            )}
+
+            {ssAdding && (
+              <div className="mb-4 bg-bg/50 border border-border rounded-lg p-4 flex flex-wrap gap-3 items-end">
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-1">
+                    Store #
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="T2882"
+                    value={ssForm.store_code}
+                    onChange={(e) => setSsForm({ ...ssForm, store_code: e.target.value })}
+                    className="w-24 text-[13px] px-2 py-1.5 rounded-md border border-border bg-surface text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-1">
+                    Notes
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="6/4 short staff"
+                    value={ssForm.notes}
+                    onChange={(e) => setSsForm({ ...ssForm, notes: e.target.value })}
+                    className="w-40 text-[13px] px-2 py-1.5 rounded-md border border-border bg-surface text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-1">
+                    Name
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="T2882 Katy Elyson"
+                    value={ssForm.site_name}
+                    onChange={(e) => setSsForm({ ...ssForm, site_name: e.target.value })}
+                    className="w-48 text-[13px] px-2 py-1.5 rounded-md border border-border bg-surface text-text-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-1">
+                    Dept
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="1006 - Luis Diaz"
+                    value={ssForm.department}
+                    onChange={(e) => setSsForm({ ...ssForm, department: e.target.value })}
+                    className="w-48 text-[13px] px-2 py-1.5 rounded-md border border-border bg-surface text-text-primary"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={addShortStaff}
+                    disabled={!ssForm.store_code.trim()}
+                    className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => { setSsAdding(false); setSsForm({ store_code: "", site_name: "", notes: "", department: "" }); }}
+                    className="text-[13px] font-semibold px-3 py-1.5 text-text-secondary hover:text-text-primary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {shortStaff.length === 0 ? (
+              <p className="text-text-muted text-sm py-4">
+                No short-staff exceptions for today. Upload the .xlsx or click + Add.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
+                      <th className="py-2 pr-3 font-medium">Store #</th>
+                      <th className="py-2 pr-3 font-medium">Notes</th>
+                      <th className="py-2 pr-3 font-medium">Name</th>
+                      <th className="py-2 pr-3 font-medium">Dept</th>
+                      <th className="py-2 pr-3 font-medium w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shortStaff.map((s) => (
+                      <tr key={s.id} className="bg-warning/5">
+                        <td className="py-2 pr-3 tabular font-semibold">{s.store_code}</td>
+                        <td className="py-2 pr-3 text-text-secondary">{s.notes ?? "—"}</td>
+                        <td className="py-2 pr-3">{s.site_name ?? "—"}</td>
+                        <td className="py-2 pr-3 text-text-muted">{s.department ?? "—"}</td>
+                        <td className="py-2 pr-3">
+                          <button
+                            onClick={() => deleteShortStaff(s.id)}
+                            className="text-[11px] text-critical hover:underline"
+                            title="Remove"
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
         </details>
       </main>
