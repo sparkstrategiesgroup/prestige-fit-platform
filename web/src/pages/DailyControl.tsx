@@ -858,7 +858,7 @@ export default function DailyControl() {
         </details>
 
         {/* Short Staff Exceptions */}
-        <details className="bg-surface border border-border rounded-xl" open={shortStaff.length > 0}>
+        <details className="bg-surface border border-border rounded-xl" open>
           <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
             <span>Short Staff Exceptions ({shortStaff.length})</span>
             <span className="text-blue-1 text-[11px]">click to {shortStaff.length > 0 ? "collapse" : "expand"}</span>
