@@ -204,7 +204,7 @@ export default function ShiftForm() {
             </div>
             <div className="flex items-center gap-3">
               <label className="text-[13px] font-semibold text-text-primary whitespace-nowrap w-40 text-right">
-                BUDGET IN WINTEAM:
+                DESCRIPTION:
               </label>
               <input
                 value={budgetWinteam}
