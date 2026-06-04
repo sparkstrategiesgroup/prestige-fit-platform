@@ -29,6 +29,10 @@
   --warning: #f59e0b;
   --critical: #ef4444;
   --info: #3b82f6;
+
+  /* Brand orange — placeholder per FIT-BUILD-BRIEF until official handoff lands */
+  --orange-1: #f36b21;
+  --orange-bg: #fef2ea;
 }
 
 @tailwind base;

@@ -29,25 +29,6 @@ type LCT = {
   time_out: string | null;
   shift_block_id: number | null;
 };
-type Recipient = {
-  payroll_number: string;
-  employee_id: number;
-  employee_name: string;
-  cell_phone: string;
-  job_site_name: string;
-  language: string;
-};
-
-type Candidate = {
-  payroll_number: string;
-  employee_name: string;
-  cell_phone: string | null;
-  job_site_name: string;
-  rate_type: string | null;
-  status: "ELIGIBLE" | "EXCLUDED";
-  reason: string | null;
-};
-
 const FUNCTIONS_URL = `${
   import.meta.env.VITE_SUPABASE_URL ?? "https://sshhcpzleurztzksrlvr.supabase.co"
 }/functions/v1`;
@@ -96,24 +77,20 @@ export default function DailyControl() {
   const [blocks, setBlocks] = useState<ShiftBlock[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [lct, setLct] = useState<LCT[]>([]);
-  const [running, setRunning] = useState<number | null>(null);
   const [counts, setCounts] = useState({ total: 0, today: 0 });
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [chainFilter, setChainFilter] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{
-    block: ShiftBlock;
-    recipients: Recipient[];
-    excluded: Candidate[];
-    warnEn: string;
-    warnEs: string;
-    clockedEn: string;
-    clockedEs: string;
-    kind: "warning" | "clocked_out";
-  } | null>(null);
+  // Shift selection / expansion / action modal for the ePay reports row
+  const [selectedBlockId, setSelectedBlockId] = useState<number | null>(null);
+  const [expandedBlockId, setExpandedBlockId] = useState<number | null>(null);
+  const [actionModal, setActionModal] =
+    useState<{ block: ShiftBlock; punchCount: number } | null>(null);
+  const [modalChoice, setModalChoice] = useState<"end_shift" | "reminder" | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const lastFocusRef = useRef<HTMLButtonElement | null>(null);
 
   async function refresh() {
     const today = new Date();
@@ -163,67 +140,14 @@ export default function DailyControl() {
     return () => window.clearInterval(id);
   }, []);
 
-  async function previewBlock(block: ShiftBlock) {
-    // Fetch eligible recipients + candidate breakdown + BOTH templates so
-    // the operator can toggle between the 15-minute warning and the
-    // post-shift clocked-out notice in the modal.
-    const [{ data: elig, error: eligErr }, { data: cands }, { data: tpls }] =
-      await Promise.all([
-        supabase.rpc("fn_eligible_for_shift_block", {
-          p_shift_block_id: block.id,
-          p_work_date: new Date().toISOString().slice(0, 10),
-        }),
-        supabase.rpc("fn_candidates_for_shift_block", {
-          p_shift_block_id: block.id,
-          p_work_date: new Date().toISOString().slice(0, 10),
-        }),
-        supabase
-          .from("message_templates")
-          .select("notification_type, language, body")
-          .in("notification_type", ["END_OF_SHIFT_WARNING", "END_OF_SHIFT_CLOCKED_OUT"])
-          .eq("active", true),
-      ]);
-    if (eligErr) {
-      setUploadStatus(`Eligibility query failed: ${eligErr.message}`);
-      return;
-    }
-    const find = (type: string, lang: string) =>
-      tpls?.find((t: any) => t.notification_type === type && t.language === lang)?.body ?? "";
-    const excluded = ((cands ?? []) as Candidate[]).filter(
-      (c) => c.status === "EXCLUDED",
-    );
-    // Default to the kind that matches the block's current status: due-now
-    // and past blocks should send the clocked-out notice; upcoming blocks
-    // should send the 15-minute warning.
-    const { status } = statusFor(block, ctNow);
-    const defaultKind: "warning" | "clocked_out" =
-      status === "due" || status === "past" ? "clocked_out" : "warning";
-    setConfirm({
-      block,
-      recipients: (elig ?? []) as Recipient[],
-      excluded,
-      warnEn: find("END_OF_SHIFT_WARNING", "en"),
-      warnEs: find("END_OF_SHIFT_WARNING", "es"),
-      clockedEn: find("END_OF_SHIFT_CLOCKED_OUT", "en"),
-      clockedEs: find("END_OF_SHIFT_CLOCKED_OUT", "es"),
-      kind: defaultKind,
-    });
-  }
-
-  async function confirmSend() {
-    if (!confirm) return;
-    setRunning(confirm.block.id);
-    setConfirm(null);
-    try {
-      const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shift_block_id: confirm.block.id, kind: confirm.kind }),
-      });
-      await res.json();
-    } finally {
-      setRunning(null);
-      refresh();
+  function handleShiftClick(id: number) {
+    if (selectedBlockId !== id) {
+      setSelectedBlockId(id);
+      setExpandedBlockId(null);
+    } else if (expandedBlockId !== id) {
+      setExpandedBlockId(id);
+    } else {
+      setExpandedBlockId(null);
     }
   }
 
@@ -265,11 +189,15 @@ export default function DailyControl() {
   }
 
   // Open-punch count per shift block, mapped via labor_control_tracking.
-  // Used to size the badge on each checkpoint tile.
   const openByBlock: Record<number, number> = {};
+  // Total rows-in-file per shift block — drives the detail panel's "X rows" line.
+  const rowsByBlock: Record<number, number> = {};
   for (const r of lct) {
-    if (!r.time_out && r.shift_block_id) {
-      openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+    if (r.shift_block_id) {
+      rowsByBlock[r.shift_block_id] = (rowsByBlock[r.shift_block_id] ?? 0) + 1;
+      if (!r.time_out) {
+        openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+      }
     }
   }
   // Chain options for the filter row (only show chains that have a tile).
@@ -472,7 +400,7 @@ export default function DailyControl() {
           )}
         </section>
 
-        {/* Checkpoint grid with real-time highlight */}
+        {/* ePay reports — shift selection row */}
         <section className="bg-surface border border-border rounded-xl p-5">
           {/* Client filter chips */}
           <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -506,87 +434,53 @@ export default function DailyControl() {
 
           <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
             <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-              Today's checkpoints
+              ePay reports — pick a shift
             </h2>
-            {(() => {
-              const due = blocks
-                .map((b) => ({ b, s: statusFor(b, ctNow) }))
-                .find((x) => x.s.status === "due");
-              const next = blocks
-                .map((b) => ({ b, s: statusFor(b, ctNow) }))
-                .filter((x) => x.s.status === "upcoming")
-                .sort((a, z) => a.s.minsAway - z.s.minsAway)[0];
-              if (due) {
-                return (
-                  <span className="text-[12px] font-semibold text-critical tabular">
-                    ● {due.b.label} is due now — send the text
-                  </span>
-                );
-              }
-              if (next) {
-                return (
-                  <span className="text-[12px] font-semibold text-blue-1 tabular">
-                    Next up: {next.b.label} in {next.s.minsAway} min
-                  </span>
-                );
-              }
-              return (
-                <span className="text-[12px] text-text-muted tabular">
-                  No checkpoints in the next hour
-                </span>
-              );
-            })()}
+            <span className="text-[12px] text-text-muted">
+              Click once to select · twice to expand
+            </span>
           </div>
-          <ul className="grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+
+          <ul className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
             {visibleBlocks.map((b) => {
-              const { status, minsAway } = statusFor(b, ctNow);
-              const openCount = openByBlock[b.id] ?? 0;
-              const styles: Record<BlockStatus, string> = {
-                due:      "bg-critical/10 border-critical ring-2 ring-critical/40 live-pulse",
-                upcoming: "bg-blue-3 border-blue-1",
-                past:     "bg-bg border-border opacity-60",
-                future:   "bg-bg border-border",
-              };
-              const badge: Record<BlockStatus, string> = {
-                due:      "DUE NOW",
-                upcoming: `in ${minsAway} min`,
-                past:     `${minsAway} min ago`,
-                future:   "later today",
-              };
-              const badgeColor: Record<BlockStatus, string> = {
-                due:      "text-critical",
-                upcoming: "text-blue-1",
-                past:     "text-text-muted",
-                future:   "text-text-muted",
-              };
+              const state: ShiftBoxState =
+                expandedBlockId === b.id
+                  ? "expanded"
+                  : selectedBlockId === b.id
+                    ? "selected"
+                    : "inactive";
               return (
                 <li key={b.id}>
-                  <button
-                    onClick={() => previewBlock(b)}
-                    disabled={running === b.id}
-                    className={`w-full text-left border rounded-lg p-3 transition-colors hover:bg-blue-3 disabled:opacity-50 ${styles[status]}`}
-                  >
-                    <div className="flex items-baseline justify-between">
-                      <div className="text-[13px] font-semibold text-text-primary">
-                        {b.label}
-                      </div>
-                      <div className={`text-[10px] font-semibold uppercase tracking-wider tabular ${badgeColor[status]}`}>
-                        {badge[status]}
-                      </div>
-                    </div>
-                    <div className="text-[12px] text-text-secondary mt-0.5 tabular">
-                      {openCount === 0
-                        ? "no open punches"
-                        : `${openCount} open punch${openCount === 1 ? "" : "es"}`}
-                    </div>
-                    <div className="text-[11px] text-blue-1 mt-1">
-                      {running === b.id ? "Sending…" : "Run this checkpoint →"}
-                    </div>
-                  </button>
+                  <ShiftBox
+                    block={b}
+                    state={state}
+                    onClick={() => handleShiftClick(b.id)}
+                  />
                 </li>
               );
             })}
           </ul>
+
+          {expandedBlockId !== null &&
+            (() => {
+              const block = visibleBlocks.find((b) => b.id === expandedBlockId);
+              if (!block) return null;
+              const rows = rowsByBlock[block.id] ?? 0;
+              const punches = openByBlock[block.id] ?? 0;
+              return (
+                <div className="mt-4">
+                  <ShiftDetailPanel
+                    block={block}
+                    rowsInFile={rows > 0 ? rows : null}
+                    punchCount={punches}
+                    onOpenActions={(originBtn) => {
+                      lastFocusRef.current = originBtn;
+                      setActionModal({ block, punchCount: punches });
+                    }}
+                  />
+                </div>
+              );
+            })()}
         </section>
 
         {/* Today's punches — collapsed by default; driven by the upload above */}
@@ -678,7 +572,7 @@ export default function DailyControl() {
           <section className="px-5 pb-5">
           {notifs.length === 0 ? (
             <p className="text-text-muted text-sm py-4">
-              No notifications yet — click a checkpoint above to run.
+              No notifications yet.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -726,170 +620,231 @@ export default function DailyControl() {
         </details>
       </main>
 
-      {/* Confirmation modal */}
-      {confirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          style={{ background: "rgba(15, 23, 42, 0.5)" }}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-5 border-b border-border">
-              <h3 className="text-[16px] font-bold text-text-primary">
-                Send to {confirm.recipients.length}{" "}
-                {confirm.recipients.length === 1 ? "person" : "people"}?
-              </h3>
-              <p className="text-[13px] text-text-secondary mt-1">
-                <strong>{confirm.block.label}</strong> checkpoint · suppressed
-                rows excluded automatically.
-              </p>
-            </div>
-
-            {/* Which notification? */}
-            <div className="p-5 border-b border-border bg-bg/40 space-y-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                Which message?
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "warning" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "warning"
-                      ? "bg-warning/10 border-warning ring-2 ring-warning/30"
-                      : "bg-surface border-border hover:border-warning"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    15-minute reminder
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift will be ending soon"
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "clocked_out"
-                      ? "bg-good/10 border-good ring-2 ring-good/30"
-                      : "bg-surface border-border hover:border-good"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    Clocked-out notice
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift has ended — please stop"
-                  </div>
-                </button>
-              </div>
-
-              {(() => {
-                const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
-                const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
-                return (
-                  <>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                      <span>Message preview</span>
-                      <span className="tabular text-text-secondary">
-                        {confirm.recipients.length * 2} messages · {(en.length + es.length)} characters
-                      </span>
-                    </div>
-                    <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                      {en}
-                      {"\n\n"}
-                      {es}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="overflow-y-auto p-5 flex-1 space-y-5">
-              {/* Excluded breakdown — transparency / trust builder */}
-              {confirm.excluded.length > 0 && (() => {
-                const groups: Record<string, Candidate[]> = {};
-                for (const c of confirm.excluded) {
-                  const k = c.reason ?? "Other";
-                  (groups[k] ||= []).push(c);
-                }
-                return (
-                  <div className="bg-bg/50 border border-border rounded-lg p-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                      {confirm.excluded.length} excluded · {confirm.recipients.length + confirm.excluded.length} total candidates
-                    </div>
-                    <ul className="space-y-2">
-                      {Object.entries(groups)
-                        .sort((a, b) => b[1].length - a[1].length)
-                        .map(([reason, list]) => (
-                          <li key={reason} className="text-[13px]">
-                            <details>
-                              <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
-                                <span className="font-semibold tabular text-text-primary">{list.length}</span>
-                                <span className="text-text-secondary">{reason}</span>
-                              </summary>
-                              <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
-                                {list.map((c) => (
-                                  <li key={c.payroll_number + c.employee_name}>
-                                    {c.employee_name} <span className="text-text-muted">· {c.job_site_name}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </details>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                );
-              })()}
-
-              {confirm.recipients.length === 0 ? (
-                <p className="text-text-muted text-sm">
-                  No one to text for the {confirm.block.label} checkpoint.
-                </p>
-              ) : (
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                      <th className="py-2 pr-3 font-medium">Employee</th>
-                      <th className="py-2 pr-3 font-medium">Site</th>
-                      <th className="py-2 pr-3 font-medium">Phone</th>
-                      <th className="py-2 pr-3 font-medium">Lang</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {confirm.recipients.map((r) => (
-                      <tr key={r.payroll_number}>
-                        <td className="py-2 pr-3">{r.employee_name}</td>
-                        <td className="py-2 pr-3">{r.job_site_name}</td>
-                        <td className="py-2 pr-3 tabular">{r.cell_phone}</td>
-                        <td className="py-2 pr-3 text-text-muted">{r.language}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-            <div className="p-5 border-t border-border flex justify-end gap-2">
-              <button
-                onClick={() => setConfirm(null)}
-                className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSend}
-                disabled={confirm.recipients.length === 0}
-                className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
-              >
-                Send {confirm.recipients.length * 2} text
-                {confirm.recipients.length === 1 ? "s" : "s"}
-              </button>
-            </div>
-          </div>
-        </div>
+      {actionModal && (
+        <ShiftActionModal
+          block={actionModal.block}
+          punchCount={actionModal.punchCount}
+          choice={modalChoice}
+          onChoose={setModalChoice}
+          onClose={() => {
+            setActionModal(null);
+            setModalChoice(null);
+            lastFocusRef.current?.focus();
+          }}
+        />
       )}
     </>
+  );
+}
+
+type ShiftBoxState = "inactive" | "selected" | "expanded";
+
+function CheckIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
+      <path
+        d="M3 7.5L5.5 10L11 4.5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ShiftBox({
+  block,
+  state,
+  onClick,
+}: {
+  block: ShiftBlock;
+  state: ShiftBoxState;
+  onClick: () => void;
+}) {
+  const active = state !== "inactive";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      aria-expanded={state === "expanded"}
+      className={`w-full text-left border rounded-lg p-3 transition-colors duration-150 ${
+        active
+          ? "bg-orange-bg border-orange-1 ring-2 ring-orange-1/30 text-text-primary"
+          : "bg-bg border-border text-text-muted hover:border-text-muted"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className={`text-[14px] ${active ? "font-semibold" : "font-medium"}`}>
+          {block.label} shift
+        </span>
+        {active && <CheckIcon className="text-orange-1 shrink-0" />}
+      </div>
+    </button>
+  );
+}
+
+function ShiftDetailPanel({
+  block,
+  rowsInFile,
+  punchCount,
+  onOpenActions,
+}: {
+  block: ShiftBlock;
+  rowsInFile: number | null;
+  punchCount: number;
+  onOpenActions: (originBtn: HTMLButtonElement) => void;
+}) {
+  const hasFile = rowsInFile !== null;
+  return (
+    <section className="bg-surface border border-orange-1 rounded-xl p-5 space-y-2">
+      <div className="text-[16px] font-semibold text-text-primary">
+        {block.label} shift e-pay drop expected time
+        {/* TODO(epay-drop-time): real expected-time source pending — using end_time_local */}
+        <span className="ml-2 tabular text-text-secondary font-normal">
+          {block.end_time_local}
+        </span>
+      </div>
+      {hasFile ? (
+        <>
+          <div className="text-[13px] text-text-secondary">
+            Punch report {block.label} shift
+          </div>
+          <div className="text-[13px] text-text-secondary tabular">
+            {rowsInFile} {rowsInFile === 1 ? "row" : "rows"}
+          </div>
+          <div className="text-[13px] text-text-secondary tabular">
+            {punchCount} {punchCount === 1 ? "punch" : "punches"}
+          </div>
+        </>
+      ) : (
+        <div className="text-[13px] text-text-muted italic">No file dropped yet</div>
+      )}
+      <div className="pt-2">
+        <button
+          type="button"
+          onClick={(e) => onOpenActions(e.currentTarget)}
+          className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-orange-1 text-orange-1 hover:bg-orange-bg transition-colors"
+        >
+          Open actions
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ShiftActionModal({
+  block,
+  punchCount,
+  choice,
+  onChoose,
+  onClose,
+}: {
+  block: ShiftBlock;
+  punchCount: number;
+  choice: "end_shift" | "reminder" | null;
+  onChoose: (c: "end_shift" | "reminder") => void;
+  onClose: () => void;
+}) {
+  const firstOptionRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    firstOptionRef.current?.focus();
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(15, 23, 42, 0.5)" }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shift-action-heading"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="bg-surface rounded-xl shadow-xl border border-border max-w-md w-full">
+        <div className="p-5 border-b border-border">
+          <h3
+            id="shift-action-heading"
+            className="text-[16px] font-bold text-text-primary"
+          >
+            End {block.label} shift
+          </h3>
+          <p className="text-[13px] text-text-secondary mt-1 tabular">
+            You will have {punchCount} {punchCount === 1 ? "punch" : "punches"}.
+          </p>
+        </div>
+        <div className="p-5 grid grid-cols-2 gap-3">
+          <button
+            ref={firstOptionRef}
+            type="button"
+            onClick={() => onChoose("end_shift")}
+            aria-pressed={choice === "end_shift"}
+            className={`text-left border rounded-lg p-3 transition-colors ${
+              choice === "end_shift"
+                ? "bg-orange-bg border-orange-1 ring-2 ring-orange-1/30"
+                : "bg-surface border-border hover:border-orange-1"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-text-primary">
+                End shift
+              </span>
+              {choice === "end_shift" && (
+                <CheckIcon className="text-orange-1 shrink-0" />
+              )}
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onChoose("reminder")}
+            aria-pressed={choice === "reminder"}
+            className={`text-left border rounded-lg p-3 transition-colors ${
+              choice === "reminder"
+                ? "bg-orange-bg border-orange-1 ring-2 ring-orange-1/30"
+                : "bg-surface border-border hover:border-orange-1"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-text-primary uppercase">
+                15-minute reminder
+              </span>
+              {choice === "reminder" && (
+                <CheckIcon className="text-orange-1 shrink-0" />
+              )}
+            </div>
+          </button>
+        </div>
+        <div className="p-5 border-t border-border flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onClose}
+            disabled={!choice}
+            className="px-4 py-2 text-[13px] font-semibold rounded-md bg-orange-1 hover:opacity-90 text-white disabled:opacity-50"
+          >
+            Confirm
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

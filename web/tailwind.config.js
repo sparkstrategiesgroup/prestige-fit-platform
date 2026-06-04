@@ -20,6 +20,8 @@ export default {
         warning: "var(--warning)",
         critical: "var(--critical)",
         info: "var(--info)",
+        "orange-1": "var(--orange-1)",
+        "orange-bg": "var(--orange-bg)",
       },
       fontFamily: {
         sans: [
