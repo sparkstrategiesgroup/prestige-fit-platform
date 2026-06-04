@@ -5,6 +5,7 @@ import DailyControl from "./pages/DailyControl";
 import PunchPAM from "./pages/PunchPAM";
 import ShiftCoverage from "./pages/ShiftCoverage";
 import Compliance from "./pages/Compliance";
+import ShiftForm from "./pages/ShiftForm";
 
 /**
  * Top-level tabs. Daily Control inserted between Overview and Punch & PAM
@@ -15,6 +16,7 @@ const TABS: TabDef[] = [
   { to: "/daily-control", label: "Labor Control Tracking" },
   { to: "/punch-pam", label: "Punch & PAM" },
   { to: "/shift-coverage", label: "Shift Coverage" },
+  { to: "/shift-form", label: "Shift Form" },
   { to: "/compliance", label: "Compliance" },
 ];
 
@@ -29,6 +31,7 @@ export default function App() {
           <Route path="/daily-control" element={<DailyControl />} />
           <Route path="/punch-pam" element={<PunchPAM />} />
           <Route path="/shift-coverage" element={<ShiftCoverage />} />
+          <Route path="/shift-form" element={<ShiftForm />} />
           <Route path="/compliance" element={<Compliance />} />
         </Routes>
       </div>
