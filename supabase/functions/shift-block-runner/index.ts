@@ -106,7 +106,12 @@ async function runOne(
     }
   }
 
-  const { error: insErr } = await supabase.from("notifications").insert(rows);
+  const { error: insErr } = await supabase
+    .from("notifications")
+    .upsert(rows, {
+      onConflict: "employee_id,shift_block_id,notification_type,scheduled_for",
+      ignoreDuplicates: true,
+    });
   if (insErr) throw new Error(`notifications insert failed: ${insErr.message}`);
 
   return { recipients: recipients.length, notifications: rows.length };
@@ -138,7 +143,7 @@ Deno.serve(async (req) => {
   }
 
   const targets: { id: number; kind: Kind }[] = [];
-  if (body.shift_block_id) {
+  if (body.shift_block_id != null) {
     const kinds: Kind[] = body.kind ? [body.kind] : ["warning", "clocked_out"];
     for (const k of kinds) targets.push({ id: body.shift_block_id, kind: k });
   } else {

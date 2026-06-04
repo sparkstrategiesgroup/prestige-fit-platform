@@ -97,7 +97,7 @@ export default function DailyControl() {
   const [notifs, setNotifs] = useState<Notification[]>([]);
   const [lct, setLct] = useState<LCT[]>([]);
   const [running, setRunning] = useState<number | null>(null);
-  const [counts, setCounts] = useState({ total: 0, today: 0 });
+  const [counts, setCounts] = useState({ total: 0, today: 0, clockedOutToday: 0 });
   const [lastRun, setLastRun] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string>("");
@@ -118,32 +118,45 @@ export default function DailyControl() {
   async function refresh() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const [{ data: n, count: total }, { count: today_ct }, { data: l }] =
-      await Promise.all([
-        supabase
-          .from("notifications")
-          .select(
-            "id,recipient_address,language,notification_type,provider,message_body,sent_at,shift_block_id",
-            { count: "exact" },
-          )
-          .order("sent_at", { ascending: false })
-          .limit(20),
-        supabase
-          .from("notifications")
-          .select("id", { count: "exact", head: true })
-          .gte("sent_at", today.toISOString()),
-        supabase
-          .from("labor_control_tracking")
-          .select(
-            "payroll_number,employee_name,job_site_name,rate_type,time_in,time_out,shift_block_id",
-          )
-          .eq("work_date", new Date().toISOString().slice(0, 10))
-          .order("time_in")
-          .limit(100),
-      ]);
+    const [
+      { data: n, count: total },
+      { count: today_ct },
+      { count: clocked_out_ct },
+      { data: l },
+    ] = await Promise.all([
+      supabase
+        .from("notifications")
+        .select(
+          "id,recipient_address,language,notification_type,provider,message_body,sent_at,shift_block_id",
+          { count: "exact" },
+        )
+        .order("sent_at", { ascending: false })
+        .limit(20),
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .gte("sent_at", today.toISOString()),
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .gte("sent_at", today.toISOString())
+        .eq("notification_type", "END_OF_SHIFT_CLOCKED_OUT"),
+      supabase
+        .from("labor_control_tracking")
+        .select(
+          "payroll_number,employee_name,job_site_name,rate_type,time_in,time_out,shift_block_id",
+        )
+        .eq("work_date", new Date().toISOString().slice(0, 10))
+        .order("time_in")
+        .limit(2000),
+    ]);
     setNotifs((n ?? []) as Notification[]);
     setLct((l ?? []) as LCT[]);
-    setCounts({ total: total ?? 0, today: today_ct ?? 0 });
+    setCounts({
+      total: total ?? 0,
+      today: today_ct ?? 0,
+      clockedOutToday: clocked_out_ct ?? 0,
+    });
     setLastRun(n && n.length ? n[0].sent_at : null);
   }
 
@@ -155,6 +168,12 @@ export default function DailyControl() {
       .then(({ data }) => setBlocks((data ?? []) as ShiftBlock[]));
     refresh();
   }, []);
+
+  async function authHeaders(): Promise<Record<string, string>> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return {};
+    return { Authorization: `Bearer ${session.access_token}` };
+  }
 
   // Update the "due now" badge every 30 seconds. No need to tick faster —
   // the warning/clocked windows are minute-level.
@@ -215,12 +234,18 @@ export default function DailyControl() {
     setRunning(confirm.block.id);
     setConfirm(null);
     try {
+      const auth = await authHeaders();
       const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...auth },
         body: JSON.stringify({ shift_block_id: confirm.block.id, kind: confirm.kind }),
       });
-      await res.json();
+      const j = await res.json();
+      if (!res.ok) {
+        setUploadStatus(`Send failed: ${j.error ?? res.statusText}`);
+      }
+    } catch (err) {
+      setUploadStatus(`Send failed: ${(err as Error).message}`);
     } finally {
       setRunning(null);
       refresh();
@@ -235,8 +260,10 @@ export default function DailyControl() {
     const fd = new FormData();
     fd.append("file", file);
     try {
+      const auth = await authHeaders();
       const res = await fetch(`${FUNCTIONS_URL}/epay-import`, {
         method: "POST",
+        headers: auth,
         body: fd,
       });
       const j = await res.json();
@@ -281,14 +308,13 @@ export default function DailyControl() {
   const missing = lct.filter((r) => !r.time_out).length;
   const resolved = lct.filter((r) => r.time_out).length;
   const responseRate = counts.today > 0
-    ? Math.round((notifs.filter((n) => n.notification_type === "END_OF_SHIFT_CLOCKED_OUT").length / counts.today) * 100)
+    ? Math.round((counts.clockedOutToday / counts.today) * 100)
     : 0;
 
   const sitesOpen = new Set(lct.map((r) => r.job_site_name)).size;
   const sitesWithOpen = new Set(lct.filter((r) => !r.time_out).map((r) => r.job_site_name)).size;
   const activeEmployees = new Set(lct.map((r) => r.payroll_number)).size;
   const employeesOnClock = new Set(lct.filter((r) => !r.time_out).map((r) => r.payroll_number)).size;
-  const closedToday = lct.filter((r) => r.time_out).length;
 
   function exportReport() {
     const headers = ["Payroll #","Employee","Site","Rate","Time In","Time Out","Status"];
@@ -314,7 +340,7 @@ export default function DailyControl() {
       <HeaderBar
         title="Labor Control Tracking"
         subtitle={lct.length > 0
-          ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+          ? `${lct.length} punches loaded · ${lct.length - resolved} active · ${resolved} closed`
           : "Track punches and outreach in real time"}
         right={
           <div className="flex items-center gap-2">
@@ -370,8 +396,8 @@ export default function DailyControl() {
           />
           <KpiCard
             label="PAM RESOLUTION"
-            value={closedToday + "/" + lct.length}
-            changeText={lct.length > 0 ? `${Math.round((closedToday/lct.length)*100)}% resolved` : undefined}
+            value={resolved + "/" + lct.length}
+            changeText={lct.length > 0 ? `${Math.round((resolved/lct.length)*100)}% resolved` : undefined}
           />
           <KpiCard
             label="EXCESS HOURS RISK"
@@ -447,17 +473,14 @@ export default function DailyControl() {
                 new sites, and refresh the dashboard.
               </p>
             </div>
-            <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={uploading}
+              className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50"
+            >
               {uploading ? "Uploading…" : "Choose .xlsx file"}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
+            </button>
           </div>
           {uploadStatus && (
             <div className="mt-3 text-[13px] text-text-secondary tabular flex items-center gap-3 flex-wrap">
@@ -883,8 +906,7 @@ export default function DailyControl() {
                 disabled={confirm.recipients.length === 0}
                 className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
               >
-                Send {confirm.recipients.length * 2} text
-                {confirm.recipients.length === 1 ? "s" : "s"}
+                Send {confirm.recipients.length * 2} text{confirm.recipients.length * 2 === 1 ? "" : "s"}
               </button>
             </div>
           </div>

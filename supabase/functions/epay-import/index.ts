@@ -36,22 +36,30 @@ const EXPECTED_HEADERS = [
 
 type ImportError = { row: number; field?: string; message: string };
 
+// Convert a naive local-time ISO string to UTC given an IANA timezone.
+function toUtcIso(naive: string, tz: string): string {
+  const ref = new Date(naive + "Z");
+  const utcStr = ref.toLocaleString("en-US", { timeZone: "UTC" });
+  const tzStr = ref.toLocaleString("en-US", { timeZone: tz });
+  const offsetMs = new Date(tzStr).getTime() - new Date(utcStr).getTime();
+  return new Date(ref.getTime() - offsetMs).toISOString();
+}
+
+// Returns a naive ISO string (no timezone marker). Call toUtcIso() after
+// the site lookup to convert to a proper TIMESTAMPTZ value.
 function parseEpayDateTime(raw: unknown): string | null {
   if (raw === null || raw === undefined || raw === "") return null;
-  // Epay format: "MM/DD/YYYY HH:MM" (24h). xlsx may give us a number (serial) or string.
   if (typeof raw === "number") {
-    // Excel serial → ms
     const ms = Math.round((raw - 25569) * 86400 * 1000);
-    return new Date(ms).toISOString();
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:00`;
   }
   const s = String(raw).trim();
   const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
   if (!m) return null;
   const [, mm, dd, yyyy, hh, mi] = m;
-  // We store TIMESTAMPTZ; treat naive Epay times as the site's local time later.
-  // For now, build a Z-suffixed string in the row's local wall clock; the
-  // shift-block-runner re-interprets it via site.time_zone.
-  return `${yyyy}-${mm}-${dd}T${hh ?? "00"}:${mi ?? "00"}:00Z`;
+  return `${yyyy}-${mm}-${dd}T${hh ?? "00"}:${mi ?? "00"}:00`;
 }
 
 function parseEpayDate(raw: unknown): string | null {
@@ -67,7 +75,8 @@ function parseEpayDate(raw: unknown): string | null {
 }
 
 function parseHoursToDecimal(raw: unknown): number | null {
-  if (!raw) return null;
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw === "number") return raw;
   const s = String(raw).trim();
   const m = s.match(/^(\d+):(\d{2})$/);
   if (!m) return null;
@@ -176,15 +185,20 @@ Deno.serve(async (req) => {
     }
 
     const workDate = parseEpayDate(row[idx["Date"]]);
-    const timeIn = parseEpayDateTime(row[idx["Time In"]]);
-    const timeOut = parseEpayDateTime(row[idx["Time Out"]]);
-    if (!workDate || !timeIn) {
+    const timeInNaive = parseEpayDateTime(row[idx["Time In"]]);
+    const timeOutNaive = parseEpayDateTime(row[idx["Time Out"]]);
+    if (!workDate || !timeInNaive) {
       errors.push({
         row: r + 1,
         message: "Date or Time In could not be parsed",
       });
       continue;
     }
+
+    const timeIn = toUtcIso(timeInNaive, site.time_zone);
+    const timeOut = timeOutNaive
+      ? toUtcIso(timeOutNaive, site.time_zone)
+      : null;
 
     // Match a shift_block from the row's time_out (or per_schedule fallback)
     // by hour-of-day. The runner does the real eligibility; here we just
@@ -194,17 +208,22 @@ Deno.serve(async (req) => {
     let perScheduleHours: number | null = null;
     let peoplePerShift: number | null = null;
 
-    const { data: sched } = await supabase
+    const { data: scheds } = await supabase
       .from("job_site_schedules")
       .select(
         "shift_block_id, scheduled_out_local, scheduled_hours, people_per_shift",
       )
       .eq("job_site_id", site.id)
       .eq("active", true)
-      .maybeSingle();
+      .order("scheduled_out_local")
+      .limit(1);
+    const sched = scheds?.[0] ?? null;
     if (sched) {
       shiftBlockId = sched.shift_block_id;
-      perScheduleOut = `${workDate}T${sched.scheduled_out_local}Z`;
+      perScheduleOut = toUtcIso(
+        `${workDate}T${sched.scheduled_out_local}`,
+        site.time_zone,
+      );
       perScheduleHours = sched.scheduled_hours;
       peoplePerShift = sched.people_per_shift;
     }
