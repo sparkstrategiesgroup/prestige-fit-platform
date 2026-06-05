@@ -123,6 +123,55 @@ const TZ_STRIP = [
   { label: "PACIFIC",  iana: "America/Los_Angeles" },
 ];
 
+/**
+ * Surfaces "a shift change was applied today" so the operator knows the
+ * Master Schedule was modified — without expanding the Shift Change card.
+ * Each manual SHIFT FORM submission auto-applies a new schedule_slot tagged
+ * to a fresh master_schedule_revision, which fn_candidates_for_shift_block
+ * then picks up immediately.
+ */
+function ShiftChangeBanner({ refreshKey: _refreshKey }: { refreshKey: number }) {
+  const [count, setCount] = useState(0);
+  const [latest, setLatest] = useState<string | null>(null);
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    supabase
+      .from("master_schedule_revision")
+      .select("id, applied_at, source_filename")
+      .eq("status", "applied")
+      .gte("applied_at", today + "T00:00:00")
+      .ilike("source_filename", "%manual%")
+      .order("applied_at", { ascending: false })
+      .limit(20)
+      .then(({ data }) => {
+        const rows = data ?? [];
+        setCount(rows.length);
+        if (rows[0]?.applied_at) {
+          setLatest(
+            new Date(rows[0].applied_at).toLocaleTimeString("en-US", {
+              timeZone: "America/Chicago",
+              hour: "numeric", minute: "2-digit", hour12: true,
+            }) + " CT",
+          );
+        }
+      });
+  }, [_refreshKey]);
+
+  if (count === 0) return null;
+  return (
+    <section className="bg-warning/10 border border-warning rounded-xl p-3 flex items-center justify-between flex-wrap gap-2">
+      <div className="text-[13px] text-warning font-semibold">
+        <span className="uppercase tracking-[0.06em] text-[11px] mr-2">Shift change</span>
+        {count} {count === 1 ? "change" : "changes"} applied to today's schedule
+        {latest && <span className="ml-2 font-normal text-text-secondary">· last at {latest}</span>}
+      </div>
+      <a href="#shift-changes" className="text-[12px] font-semibold underline">
+        Review →
+      </a>
+    </section>
+  );
+}
+
 function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -669,6 +718,7 @@ export default function DailyControl() {
       <main className="max-w-page mx-auto px-5 py-5 space-y-5">
         <DateClockBar ctNow={ctNow} />
         <EpayReportChecklist refreshKey={lct.length} />
+        <ShiftChangeBanner refreshKey={lct.length} />
 
         {/* ============================================================== */}
         {/* HERO — the one thing the operator should do next.              */}

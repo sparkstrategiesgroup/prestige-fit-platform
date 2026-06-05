@@ -273,12 +273,13 @@ export function ShiftChangeRequestCard() {
       .from("master_schedule_revision")
       .insert({
         source_filename: tag,
-        status: "pending",
+        status: "applied",
         slot_count: filledRows.length,
         slots_added: filledRows.length,
         slots_modified: 0,
         slots_removed: 0,
         notes: note.trim() || null,
+        applied_at: new Date().toISOString(),
       })
       .select("id").single();
 
@@ -317,6 +318,30 @@ export function ShiftChangeRequestCard() {
     const { error: changeErr } = await supabase.from("master_schedule_change").insert(changes);
     if (changeErr) {
       setError(changeErr.message);
+      setSaving(false);
+      return;
+    }
+
+    // Auto-apply: write the schedule_slot rows so fn_candidates_for_shift_block
+    // picks them up immediately. Each ShiftRow → 1 schedule_slot tagged to the
+    // new revision so we can roll back later.
+    const slotRows = filledRows.map((r) => {
+      const meal = parseInt(r.meal || "0", 10) || 0;
+      const days = r.days.map((d) => (parseInt(d || "0", 10) || 0) > 0);
+      return {
+        site_id: site,
+        start_time: r.start + ":00",
+        end_time: r.end + ":00",
+        days_of_week: days,
+        flex_hours: meal,
+        time_zone: "America/Chicago",
+        role: r.role || null,
+        master_schedule_revision_id: rev.id,
+      };
+    });
+    const { error: slotErr } = await supabase.from("schedule_slot").insert(slotRows);
+    if (slotErr) {
+      setError("Saved revision but could not apply slots: " + slotErr.message);
       setSaving(false);
       return;
     }
@@ -389,9 +414,9 @@ export function ShiftChangeRequestCard() {
             Shift change requests
             <span className="ml-2 text-text-primary">{rows.length}</span>
             <span className="ml-1 text-text-secondary font-normal normal-case">today</span>
-            {pendingCount > 0 && (
+            {rows.length > 0 && (
               <span className="ml-2 text-warning text-[11px] font-semibold">
-                · {pendingCount} pending approval
+                · applied to today's schedule
               </span>
             )}
           </h2>
