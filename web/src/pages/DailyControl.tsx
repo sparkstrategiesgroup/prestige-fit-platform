@@ -1129,30 +1129,20 @@ export default function DailyControl() {
             const ampm = h >= 12 ? "PM" : "AM";
             const h12 = h % 12 === 0 ? 12 : h % 12;
             const punchOut = `${h12}:${String(m).padStart(2, "0")} ${ampm} CT`;
-            // Current CT wall clock for the "right now" line under PUNCH OUT TIME.
-            const nowH = Math.floor(ctNow / 60);
-            const nowM = ctNow % 60;
-            const nowAmpm = nowH >= 12 ? "PM" : "AM";
-            const nowH12 = nowH % 12 === 0 ? 12 : nowH % 12;
-            const nowStr = `${nowH12}:${String(nowM).padStart(2, "0")} ${nowAmpm} CT`;
-            // Relative-time hint + recommendation.
+            // Relative-time hint.
             const diff = endMinutes - ctNow; // positive => in the future
             let relText: string;
-            let recommend: "warning" | "clocked_out";
             if (diff > 0) {
               relText = diff >= 60
                 ? `in ${Math.floor(diff / 60)}h ${diff % 60}m`
                 : `in ${diff} min`;
-              recommend = diff <= 20 ? "warning" : "warning";
             } else if (diff === 0) {
               relText = "right now";
-              recommend = "clocked_out";
             } else {
               const past = -diff;
               relText = past >= 60
                 ? `${Math.floor(past / 60)}h ${past % 60}m ago`
                 : `${past} min ago`;
-              recommend = "clocked_out";
             }
             return (
               <div className="bg-surface rounded-xl shadow-xl border border-border max-w-3xl w-full max-h-[90vh] flex flex-col">
