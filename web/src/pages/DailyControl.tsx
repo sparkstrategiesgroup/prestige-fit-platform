@@ -1150,10 +1150,6 @@ export default function DailyControl() {
                           <strong className="text-text-primary">{totalByBlock[confirm.block.id] ?? 0}</strong> punches in this shift
                         </div>
                       </div>
-                      <div className="text-[13px] text-text-secondary mt-3 pt-3 border-t border-border">
-                        {confirm.block.label} checkpoint ·{" "}
-                        <strong>{confirm.recipients.length}</strong> eligible
-                      </div>
                     </div>
 
                     {/* Reminder type toggle — multi-select */}
