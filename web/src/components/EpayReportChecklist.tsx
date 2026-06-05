@@ -70,16 +70,32 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
       return;
     }
     setLoading(true);
-    supabase
-      .from("labor_control_tracking")
-      .select("payroll_number, employee_name, job_site_name, rate_type, time_in, time_out")
-      .eq("epay_import_id", open.import_id)
-      .order("time_in")
-      .limit(2000)
-      .then(({ data }) => {
-        setPunches((data ?? []) as ImportPunch[]);
+    // The chip drill-in should show punches for THIS shift block (matching
+    // by label), not punches that came in via this specific import row —
+    // because fn_ingest_lct_row preserves the FIRST import_id on conflict,
+    // so a later hourly file's import_id has zero matching LCT rows.
+    (async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const { data: block } = await supabase
+        .from("shift_blocks")
+        .select("id")
+        .eq("label", open.label)
+        .maybeSingle();
+      if (!block) {
+        setPunches([]);
         setLoading(false);
-      });
+        return;
+      }
+      const { data } = await supabase
+        .from("labor_control_tracking")
+        .select("payroll_number, employee_name, job_site_name, rate_type, time_in, time_out")
+        .eq("work_date", today)
+        .eq("shift_block_id", block.id)
+        .order("time_in")
+        .limit(2000);
+      setPunches((data ?? []) as ImportPunch[]);
+      setLoading(false);
+    })();
   }, [open]);
 
   if (rows.length === 0) return null;
