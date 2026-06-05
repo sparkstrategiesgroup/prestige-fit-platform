@@ -1168,31 +1168,15 @@ export default function DailyControl() {
                       </span>
                     </div>
                     <div className="p-5 border-b border-border">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                            Punch out time
-                          </div>
-                          <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
-                            {punchOut}
-                          </div>
-                          <div className="text-[12px] text-text-secondary mt-1 tabular">
-                            {relText}
-                          </div>
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                          Punch out time
                         </div>
-                        <div>
-                          <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                            Right now
-                          </div>
-                          <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
-                            {nowStr}
-                          </div>
-                          <div className="text-[12px] text-text-secondary mt-1">
-                            Recommend:{" "}
-                            <strong className="text-text-primary">
-                              {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
-                            </strong>
-                          </div>
+                        <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
+                          {punchOut}
+                        </div>
+                        <div className="text-[12px] text-text-secondary mt-1 tabular">
+                          {relText}
                         </div>
                       </div>
                       <div className="text-[13px] text-text-secondary mt-3 pt-3 border-t border-border">
