@@ -137,10 +137,20 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                 <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-text-muted">
                   {open.label} · ePay drop expected {fmtTime(open.expected_at)} CT
                 </div>
-                <h2 className="text-[18px] font-bold text-text-primary mt-0.5">
+                <h2
+                  className="text-[18px] font-bold text-text-primary mt-0.5"
+                  title={open.filename ?? undefined}
+                >
                   {open.import_id === null
                     ? `Not yet received — expected at ${fmtTime(open.expected_at)} CT`
-                    : open.filename ?? "(no filename)"}
+                    : `Punches Report ${open.label} · ${
+                        open.arrived_at
+                          ? new Date(open.arrived_at).toLocaleDateString("en-US", {
+                              timeZone: "America/Chicago",
+                              month: "long", day: "numeric", year: "numeric",
+                            })
+                          : ""
+                      }`}
                 </h2>
                 {open.import_id !== null && (
                   <div className="text-[12px] text-text-secondary mt-1 tabular">
