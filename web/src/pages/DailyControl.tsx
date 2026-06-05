@@ -1626,9 +1626,10 @@ const EXCEPTION_TYPES: { value: string; label: string }[] = [
 ];
 
 type BulkExceptionRow = { store: string; reason: string; other: string };
-const blankBulkRow = (): BulkExceptionRow => ({ store: "", reason: "Make-up hours", other: "" });
+const blankBulkRow = (): BulkExceptionRow => ({ store: "", reason: "No reason provided", other: "" });
 
 const EXCEPTION_REASONS = [
+  "No reason provided",
   "Make-up hours",
   "No-show",
   "Short-staffed",
