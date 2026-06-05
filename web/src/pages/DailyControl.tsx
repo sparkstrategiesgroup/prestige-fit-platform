@@ -1752,6 +1752,12 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
     onChange();
   };
 
+  const updateSavedReason = async (row: StoreException, reason: string) => {
+    setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, note: reason } : r)));
+    await supabase.from("store_exception").update({ note: reason }).eq("id", row.id);
+    onChange();
+  };
+
   return (
     <section id="store-exceptions" className="bg-surface border border-border rounded-xl">
       <button
@@ -1803,6 +1809,27 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                 <p className="text-[12px] text-text-secondary mt-1 italic">
                   Stores listed below will be ignored — make no adjustments today.
                 </p>
+              </div>
+
+              <div className="flex items-center gap-2 text-[12px]">
+                <span className="font-semibold text-text-secondary">Set reason for all filled rows:</span>
+                <select
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    setBulkRows((rs) => rs.map((r) =>
+                      r.store.trim() ? { ...r, reason: v } : r,
+                    ));
+                    e.currentTarget.selectedIndex = 0;
+                  }}
+                  defaultValue=""
+                  className="border border-border rounded px-2 py-1 text-[12px] bg-surface"
+                >
+                  <option value="">— choose —</option>
+                  {EXCEPTION_REASONS.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="overflow-x-auto border border-border rounded">
@@ -1933,7 +1960,30 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                           {EXCEPTION_TYPES.find((t) => t.value === r.exception_type)?.label ?? r.exception_type}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-text-secondary">{r.note ?? "—"}</td>
+                      <td className="px-3 py-1.5">
+                        {EXCEPTION_REASONS.includes(r.note ?? "") ? (
+                          <select
+                            value={r.note ?? ""}
+                            onChange={(e) => updateSavedReason(r, e.target.value)}
+                            className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface"
+                          >
+                            {EXCEPTION_REASONS.map((t) => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="text"
+                            defaultValue={r.note ?? ""}
+                            onBlur={(e) => {
+                              if (e.target.value !== (r.note ?? "")) {
+                                updateSavedReason(r, e.target.value);
+                              }
+                            }}
+                            className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                          />
+                        )}
+                      </td>
                       <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
                       <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
                       <td className="px-3 py-1.5 text-right">
