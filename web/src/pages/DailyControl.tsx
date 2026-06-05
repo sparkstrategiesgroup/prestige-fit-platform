@@ -203,7 +203,7 @@ export default function DailyControl() {
   const [chainFilter, setChainFilter] = useState<string | null>(null);
   // The "next action" block + its eligible count, computed reactively as
   // ctNow ticks. Drives the hero card at the top of the page.
-  const [nextEligible, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
+  const [, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
   const [showOps, setShowOps] = useState(false);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
