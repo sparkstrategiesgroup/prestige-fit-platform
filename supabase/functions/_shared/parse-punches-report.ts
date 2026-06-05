@@ -159,20 +159,24 @@ export async function ingestWorkbookBytes(
     });
     if (typeof pickedBlock === "number") shiftBlockId = pickedBlock;
 
-    const { error } = await supabase.from("labor_control_tracking").upsert({
-      job_site_id: site.id,
-      job_site_name: siteName || epayCode,
-      work_date: workDate,
-      payroll_number: String(row[idx["Payroll No"]] ?? "").trim(),
-      employee_name: String(row[idx["Employee Name"]] ?? "").trim(),
-      rate_type: String(row[idx["Rate Type"]] ?? "").trim() || null,
-      time_in: timeIn,
-      time_out: timeOut,
-      actual_hours: parseHoursToDecimal(row[idx["Actual Hours"]]),
-      time_zone: site.time_zone,
-      shift_block_id: shiftBlockId,
-      epay_import_id: importId,
-    }, { onConflict: "payroll_number,job_site_id,work_date,time_in" });
+    // fn_ingest_lct_row preserves the *first* import_id that introduced each
+    // punch — otherwise every subsequent hourly file would overwrite the
+    // pointer and orphan the prior file's chip drill-in. See
+    // supabase/migrations/*_lct_ingest_keep_first_import_id.sql.
+    const { error } = await supabase.rpc("fn_ingest_lct_row", {
+      p_job_site_id: site.id,
+      p_job_site_name: siteName || epayCode,
+      p_work_date: workDate,
+      p_payroll_number: String(row[idx["Payroll No"]] ?? "").trim(),
+      p_employee_name: String(row[idx["Employee Name"]] ?? "").trim(),
+      p_rate_type: String(row[idx["Rate Type"]] ?? "").trim() || null,
+      p_time_in: timeIn,
+      p_time_out: timeOut,
+      p_actual_hours: parseHoursToDecimal(row[idx["Actual Hours"]]),
+      p_time_zone: site.time_zone,
+      p_shift_block_id: shiftBlockId,
+      p_epay_import_id: importId,
+    });
 
     if (error) errors.push({ row: r + 1, message: error.message });
     else imported++;
