@@ -1625,8 +1625,16 @@ const EXCEPTION_TYPES: { value: string; label: string }[] = [
   { value: "other",             label: "Other" },
 ];
 
-type BulkExceptionRow = { store: string; exception_type: string };
-const blankBulkRow = (): BulkExceptionRow => ({ store: "", exception_type: "do_not_text" });
+type BulkExceptionRow = { store: string; reason: string; other: string };
+const blankBulkRow = (): BulkExceptionRow => ({ store: "", reason: "Make-up hours", other: "" });
+
+const EXCEPTION_REASONS = [
+  "Make-up hours",
+  "No-show",
+  "Short-staffed",
+  "Late arrival",
+  "Other",
+];
 
 function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -1686,15 +1694,20 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
     }
     setSaving(true);
     setError(null);
-    const payload = filled.map((r) => ({
-      site_id: r.store.trim().toUpperCase(),
-      exception_date: today,
-      exception_type: r.exception_type,
-      note: null,
-      source,
-      reporter: reporter.trim() || null,
-      active: true,
-    }));
+    const payload = filled.map((r) => {
+      const reasonLabel = r.reason === "Other" && r.other.trim()
+        ? r.other.trim()
+        : r.reason;
+      return {
+        site_id: r.store.trim().toUpperCase(),
+        exception_date: today,
+        exception_type: "other",
+        note: reasonLabel,
+        source,
+        reporter: reporter.trim() || null,
+        active: true,
+      };
+    });
     const { error: insErr } = await supabase.from("store_exception").insert(payload);
     setSaving(false);
     if (insErr) {
@@ -1774,13 +1787,14 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                 <table className="w-full text-[12px] tabular border-collapse">
                   <thead>
                     <tr className="bg-yellow-200">
-                      <th colSpan={2} className="border border-border px-2 py-1 text-center font-bold uppercase text-danger tracking-wide">
+                      <th colSpan={3} className="border border-border px-2 py-1 text-center font-bold uppercase text-danger tracking-wide">
                         Below stores — ignore notes — make no adjustments
                       </th>
                     </tr>
                     <tr className="bg-yellow-100">
-                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left w-[180px]">Store #</th>
-                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left">Exception Type</th>
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left w-[160px]">Store #</th>
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left w-[180px]">Reason</th>
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left">Other (if selected)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1797,14 +1811,24 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                         </td>
                         <td className="border border-border p-0">
                           <select
-                            value={r.exception_type}
-                            onChange={(e) => updateBulkRow(i, { exception_type: e.target.value })}
+                            value={r.reason}
+                            onChange={(e) => updateBulkRow(i, { reason: e.target.value })}
                             className="w-full px-2 py-1 text-[13px] bg-transparent"
                           >
-                            {EXCEPTION_TYPES.map((t) => (
-                              <option key={t.value} value={t.value}>{t.label}</option>
+                            {EXCEPTION_REASONS.map((t) => (
+                              <option key={t} value={t}>{t}</option>
                             ))}
                           </select>
+                        </td>
+                        <td className="border border-border p-0">
+                          <input
+                            type="text"
+                            value={r.other}
+                            onChange={(e) => updateBulkRow(i, { other: e.target.value })}
+                            disabled={r.reason !== "Other"}
+                            placeholder={r.reason === "Other" ? "Describe…" : ""}
+                            className="w-full px-2 py-1 text-[13px] bg-transparent disabled:bg-bg/30 disabled:text-text-muted"
+                          />
                         </td>
                       </tr>
                     ))}
