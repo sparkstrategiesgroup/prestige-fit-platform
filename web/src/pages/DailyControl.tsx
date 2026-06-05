@@ -1685,6 +1685,27 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
     setBulkRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   };
 
+  // Paste a newline/tab/comma/whitespace-separated list of store IDs into
+  // Store # starting at row `i`, spreading across subsequent rows and
+  // appending more if needed.
+  const pasteStores = (i: number, text: string) => {
+    const codes = text
+      .split(/[\s,;]+/)
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    if (codes.length <= 1) return false;
+    setBulkRows((rs) => {
+      const next = [...rs];
+      for (let k = 0; k < codes.length; k++) {
+        const idx = i + k;
+        if (idx >= next.length) next.push(blankBulkRow());
+        next[idx] = { ...next[idx], store: codes[k] };
+      }
+      return next;
+    });
+    return true;
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const filled = bulkRows.filter((r) => r.store.trim());
@@ -1805,6 +1826,10 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                             type="text"
                             value={r.store}
                             onChange={(e) => updateBulkRow(i, { store: e.target.value })}
+                            onPaste={(e) => {
+                              const text = e.clipboardData.getData("text");
+                              if (pasteStores(i, text)) e.preventDefault();
+                            }}
                             placeholder="T1517"
                             className="w-full px-2 py-1 text-[13px] tabular font-semibold uppercase bg-transparent"
                           />
