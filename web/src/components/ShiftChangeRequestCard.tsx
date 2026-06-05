@@ -92,10 +92,10 @@ export function ShiftChangeRequestCard() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Site name lookup + preload current schedule from master schedule mappings.
+  // Site name lookup + preload current schedule from Schedule Report mappings.
   // We pull from job_site_schedules joined to shift_blocks (1 row per
   // shift this site runs) and fall back to schedule_slot rows if the
-  // Master Schedule List has been imported. Each row populates the
+  // Schedule Report has been imported. Each row populates the
   // SHIFT FORM table with start/end/days so the operator only edits
   // what's changing.
   useEffect(() => {
@@ -112,7 +112,7 @@ export function ShiftChangeRequestCard() {
       setSiteName(siteRow.site_name ?? "");
       if (siteRow.region_code) setRegionDept(siteRow.region_code);
 
-      // Prefer schedule_slot rows when present (Master Schedule List has
+      // Prefer schedule_slot rows when present (Schedule Report has
       // landed). Otherwise derive defaults from job_site_schedules + the
       // block end times.
       const { data: slots } = await supabase

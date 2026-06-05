@@ -79,12 +79,12 @@ export default function Scheduling() {
     <>
       <HeaderBar
         title="Scheduling"
-        subtitle="Master Schedule, AWR imports, and the WinTeam Budget export"
+        subtitle="Schedule Report, AWR imports, and the WinTeam Budget export"
       />
       <main className="max-w-page mx-auto px-5 py-5">
         <div role="tablist" className="flex gap-1 border-b border-border mb-4">
           {([
-            { id: "schedule", label: "Master Schedule" },
+            { id: "schedule", label: "Schedule Report" },
             { id: "awr",      label: "AWR Imports" },
             { id: "budget",   label: "WinTeam Budget Export" },
           ] as { id: SubTab; label: string }[]).map((t) => (
@@ -220,7 +220,7 @@ function MasterScheduleTab() {
       <div className="bg-surface border border-border rounded-lg p-4 flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-            Upload Master Schedule List
+            Upload Schedule Report
           </h2>
           <p className="text-[13px] text-text-secondary mt-1">
             Drop the .xlsx straight from Excel. We'll diff it against the current
@@ -551,7 +551,7 @@ function BudgetTab() {
             WinTeam Budget Export
           </h2>
           <p className="text-[13px] text-text-secondary mt-1">
-            Pivots the current Master Schedule into the WinTeam Budget Template
+            Pivots the current Schedule Report into the WinTeam Budget Template
             shape. PayRate is the hours-weighted average from the latest AWR per
             (site, classification). BillRate from contract_bill_rate when populated.
             Subcontract Labor excluded.
@@ -590,7 +590,7 @@ function BudgetTab() {
           <div className="p-6 text-[13px] text-text-secondary">Loading…</div>
         ) : rows.length === 0 ? (
           <div className="p-6 text-[13px] text-text-secondary">
-            No budget rows. Upload a Master Schedule and an AWR first.
+            No budget rows. Upload a Schedule Report and an AWR first.
           </div>
         ) : (
           <div className="max-h-[640px] overflow-auto">
