@@ -108,15 +108,14 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                       ? `${r.filename ?? ""}\n${r.row_count ?? 0} rows · arrived ${fmtTime(r.arrived_at)} CT (ePay drops at ${fmtTime(r.expected_at)} CT)`
                       : `Expected ePay drop at ${fmtTime(r.expected_at)} CT — not yet received`
                   }
-                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] tabular cursor-pointer hover:opacity-80 transition-opacity ${
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] tabular cursor-pointer hover:opacity-80 transition-opacity uppercase ${
                     got
-                      ? "bg-good/10 border-good text-good"
+                      ? "bg-warning/15 border-warning text-warning"
                       : "bg-bg/60 border-border text-text-secondary"
                   }`}
                 >
                   <span className="font-semibold">{got ? "✓" : "☐"}</span>
                   <span>{r.label}</span>
-                  {got && <span className="text-text-muted">· {fmtTime(r.arrived_at)}</span>}
                 </button>
               );
             })}
