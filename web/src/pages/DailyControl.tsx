@@ -1164,13 +1164,13 @@ export default function DailyControl() {
                           aria-pressed={hasWarning}
                           className={`text-left border rounded-lg p-3 transition-colors ${
                             hasWarning
-                              ? "bg-blue-1/10 border-blue-1 ring-2 ring-blue-1/30"
-                              : "bg-surface border-border hover:border-blue-1"
+                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                              : "bg-surface border-border hover:border-warning"
                           }`}
                         >
-                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5 uppercase">
                             <span className={`inline-block w-3 h-3 rounded border ${
-                              hasWarning ? "bg-blue-1 border-blue-1" : "border-border bg-surface"
+                              hasWarning ? "bg-warning border-warning" : "border-border bg-surface"
                             }`} aria-hidden>
                               {hasWarning && (
                                 <svg viewBox="0 0 12 12" className="w-full h-full text-white">
@@ -1178,7 +1178,7 @@ export default function DailyControl() {
                                 </svg>
                               )}
                             </span>
-                            15-minute reminder
+                            15-MINUTE REMINDER
                           </div>
                           <div className="text-[11px] text-text-muted mt-0.5">
                             "Your shift will be ending soon"
@@ -1190,13 +1190,13 @@ export default function DailyControl() {
                           aria-pressed={hasClocked}
                           className={`text-left border rounded-lg p-3 transition-colors ${
                             hasClocked
-                              ? "bg-blue-1/10 border-blue-1 ring-2 ring-blue-1/30"
-                              : "bg-surface border-border hover:border-blue-1"
+                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                              : "bg-surface border-border hover:border-warning"
                           }`}
                         >
-                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5">
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5 uppercase">
                             <span className={`inline-block w-3 h-3 rounded border ${
-                              hasClocked ? "bg-blue-1 border-blue-1" : "border-border bg-surface"
+                              hasClocked ? "bg-warning border-warning" : "border-border bg-surface"
                             }`} aria-hidden>
                               {hasClocked && (
                                 <svg viewBox="0 0 12 12" className="w-full h-full text-white">
@@ -1204,7 +1204,7 @@ export default function DailyControl() {
                                 </svg>
                               )}
                             </span>
-                            END SHIFT
+                            END SHIFT REMINDER
                           </div>
                           <div className="text-[11px] text-text-muted mt-0.5">
                             "Your shift has ended — please stop"
