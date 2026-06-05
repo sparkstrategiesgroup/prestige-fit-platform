@@ -1123,27 +1123,6 @@ export default function DailyControl() {
                 : [...confirm.kinds, k];
               setConfirm({ ...confirm, kinds: next });
             };
-            // Format the block's end_time_local ("11:00:00") as "11:00 AM CT".
-            const [h, m] = (confirm.block.end_time_local ?? "00:00").split(":").map((n) => parseInt(n, 10));
-            const endMinutes = h * 60 + m;
-            const ampm = h >= 12 ? "PM" : "AM";
-            const h12 = h % 12 === 0 ? 12 : h % 12;
-            const punchOut = `${h12}:${String(m).padStart(2, "0")} ${ampm} CT`;
-            // Relative-time hint.
-            const diff = endMinutes - ctNow; // positive => in the future
-            let relText: string;
-            if (diff > 0) {
-              relText = diff >= 60
-                ? `in ${Math.floor(diff / 60)}h ${diff % 60}m`
-                : `in ${diff} min`;
-            } else if (diff === 0) {
-              relText = "right now";
-            } else {
-              const past = -diff;
-              relText = past >= 60
-                ? `${Math.floor(past / 60)}h ${past % 60}m ago`
-                : `${past} min ago`;
-            }
             return (
               <div className="bg-surface rounded-xl shadow-xl border border-border max-w-3xl w-full max-h-[90vh] flex flex-col">
                 <>
@@ -1160,13 +1139,15 @@ export default function DailyControl() {
                     <div className="p-5 border-b border-border">
                       <div>
                         <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                          Punch out time
+                          Next punch-out
                         </div>
-                        <div className="text-[28px] font-bold text-text-primary tabular leading-tight mt-0.5">
-                          {punchOut}
+                        <div className="text-[28px] font-bold text-warning tabular leading-tight mt-0.5">
+                          {confirm.block.label.toUpperCase()}
                         </div>
-                        <div className="text-[12px] text-text-secondary mt-1 tabular">
-                          {relText}
+                        <div className="text-[14px] text-text-secondary mt-1 tabular">
+                          <strong className="text-text-primary">{latestImport?.row_count ?? lct.length}</strong> rows in latest file
+                          {" · "}
+                          <strong className="text-text-primary">{totalByBlock[confirm.block.id] ?? 0}</strong> punches in this shift
                         </div>
                       </div>
                       <div className="text-[13px] text-text-secondary mt-3 pt-3 border-t border-border">
