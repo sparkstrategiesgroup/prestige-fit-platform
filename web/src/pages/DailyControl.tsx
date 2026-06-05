@@ -1625,8 +1625,8 @@ const EXCEPTION_TYPES: { value: string; label: string }[] = [
   { value: "other",             label: "Other" },
 ];
 
-type BulkExceptionRow = { store: string; note: string };
-const blankBulkRow = (): BulkExceptionRow => ({ store: "", note: "" });
+type BulkExceptionRow = { store: string; exception_type: string };
+const blankBulkRow = (): BulkExceptionRow => ({ store: "", exception_type: "do_not_text" });
 
 function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -1689,8 +1689,8 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
     const payload = filled.map((r) => ({
       site_id: r.store.trim().toUpperCase(),
       exception_date: today,
-      exception_type: "do_not_text",
-      note: r.note.trim() || null,
+      exception_type: r.exception_type,
+      note: null,
       source,
       reporter: reporter.trim() || null,
       active: true,
@@ -1780,7 +1780,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                     </tr>
                     <tr className="bg-yellow-100">
                       <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left w-[180px]">Store #</th>
-                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left">Notes</th>
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left">Exception Type</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1796,13 +1796,15 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                           />
                         </td>
                         <td className="border border-border p-0">
-                          <input
-                            type="text"
-                            value={r.note}
-                            onChange={(e) => updateBulkRow(i, { note: e.target.value })}
-                            placeholder="6/2 short staff"
+                          <select
+                            value={r.exception_type}
+                            onChange={(e) => updateBulkRow(i, { exception_type: e.target.value })}
                             className="w-full px-2 py-1 text-[13px] bg-transparent"
-                          />
+                          >
+                            {EXCEPTION_TYPES.map((t) => (
+                              <option key={t.value} value={t.value}>{t.label}</option>
+                            ))}
+                          </select>
                         </td>
                       </tr>
                     ))}
