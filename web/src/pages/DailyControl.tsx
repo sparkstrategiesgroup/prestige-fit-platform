@@ -675,14 +675,6 @@ export default function DailyControl() {
         {/* ============================================================== */}
         {nextBlock && (() => {
           const status = statusFor(nextBlock, ctNow);
-          // Time-to label
-          const mins = status.minsAway;
-          let when: string;
-          if (status.status === "due") {
-            when = mins > 0 ? `Due in ${mins} min` : `${-mins} min past`;
-          } else {
-            when = mins >= 60 ? `in ${Math.floor(mins / 60)}h ${mins % 60}m` : `in ${mins} min`;
-          }
           const recommend: "warning" | "clocked_out" =
             status.status === "past" || (status.status === "due" && mins <= 0)
               ? "clocked_out"
@@ -705,8 +697,6 @@ export default function DailyControl() {
                     {nextBlock.label.toUpperCase()}
                   </h2>
                   <div className="text-[14px] text-text-secondary mt-1 tabular">
-                    {when}
-                    {" · "}
                     <strong className="text-text-primary">{latestImport?.row_count ?? lct.length}</strong> rows in latest file
                     {" · "}
                     <strong className="text-text-primary">{totalByBlock[nextBlock.id] ?? 0}</strong> punches in this shift
