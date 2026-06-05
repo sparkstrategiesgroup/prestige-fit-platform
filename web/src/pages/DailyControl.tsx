@@ -710,7 +710,7 @@ export default function DailyControl() {
               </div>
               {/* Secondary actions inline */}
               <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-warning font-semibold">
-                <span className="ml-auto">
+                <span>
                   Recommended:{" "}
                   <strong>
                     {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
