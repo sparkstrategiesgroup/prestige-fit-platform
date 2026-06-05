@@ -1625,38 +1625,21 @@ const EXCEPTION_TYPES: { value: string; label: string }[] = [
   { value: "other",             label: "Other" },
 ];
 
+type BulkExceptionRow = { store: string; note: string };
+const blankBulkRow = (): BulkExceptionRow => ({ store: "", note: "" });
+
 function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<StoreException[]>([]);
   const [open, setOpen] = useState(false);
   const [showAdd, setShowAdd] = useState(false);
-  const [siteId, setSiteId] = useState("");
-  const [siteName, setSiteName] = useState("");
-  const [regionDept, setRegionDept] = useState("");
-  const [exType, setExType] = useState("closed");
-  const [note, setNote] = useState("");
+  const [bulkRows, setBulkRows] = useState<BulkExceptionRow[]>(() =>
+    Array.from({ length: 15 }, blankBulkRow),
+  );
   const [source, setSource] = useState("phone");
   const [reporter, setReporter] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Look up site name + region/dept when Site ID changes (debounced 250ms).
-  useEffect(() => {
-    if (!siteId.trim()) { setSiteName(""); return; }
-    const handle = setTimeout(async () => {
-      const code = siteId.trim().toUpperCase();
-      const { data } = await supabase.from("site")
-        .select("site_name, region_code")
-        .eq("site_id", code).maybeSingle();
-      if (data) {
-        setSiteName(data.site_name ?? "");
-        if (data.region_code) setRegionDept(data.region_code);
-      } else {
-        setSiteName("");
-      }
-    }, 250);
-    return () => clearTimeout(handle);
-  }, [siteId]);
 
   const load = async () => {
     const { data } = await supabase
@@ -1684,40 +1667,35 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
   }, []);
 
   const reset = () => {
-    setSiteId("");
-    setSiteName("");
-    setRegionDept("");
-    setExType("closed");
-    setNote("");
+    setBulkRows(Array.from({ length: 15 }, blankBulkRow));
     setSource("phone");
     setReporter("");
     setError(null);
   };
 
+  const updateBulkRow = (i: number, patch: Partial<BulkExceptionRow>) => {
+    setBulkRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!siteId.trim()) {
-      setError("Site ID is required");
+    const filled = bulkRows.filter((r) => r.store.trim());
+    if (filled.length === 0) {
+      setError("Add at least one Store #");
       return;
     }
     setSaving(true);
     setError(null);
-    // Stash Region/Dept and Site Name in the note (no schema change needed for demo)
-    const contextParts = [
-      regionDept.trim() ? `Region/Dept: ${regionDept.trim()}` : null,
-      siteName.trim() ? `Site: ${siteName.trim()}` : null,
-      note.trim() || null,
-    ].filter(Boolean);
-    const fullNote = contextParts.length ? contextParts.join(" · ") : null;
-    const { error: insErr } = await supabase.from("store_exception").insert({
-      site_id: siteId.trim().toUpperCase(),
+    const payload = filled.map((r) => ({
+      site_id: r.store.trim().toUpperCase(),
       exception_date: today,
-      exception_type: exType,
-      note: fullNote,
+      exception_type: "do_not_text",
+      note: r.note.trim() || null,
       source,
       reporter: reporter.trim() || null,
       active: true,
-    });
+    }));
+    const { error: insErr } = await supabase.from("store_exception").insert(payload);
     setSaving(false);
     if (insErr) {
       setError(insErr.message);
@@ -1783,98 +1761,87 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
           {showAdd && (
             <form
               onSubmit={submit}
-              className="bg-bg/50 border border-border rounded-lg p-4 grid gap-3 sm:grid-cols-3"
+              className="bg-white border border-border rounded-lg p-6 space-y-5"
             >
-              <label className="text-[12px] font-medium text-text-secondary">
-                Region / Dept #
-                <input
-                  type="text"
-                  value={regionDept}
-                  onChange={(e) => setRegionDept(e.target.value)}
-                  placeholder="e.g. 4006"
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular"
-                />
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary">
-                Job Site ID *
-                <input
-                  type="text"
-                  value={siteId}
-                  onChange={(e) => setSiteId(e.target.value)}
-                  placeholder="T0067 / KOH0130 / H3007"
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] tabular font-semibold uppercase"
-                  autoFocus
-                />
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary">
-                Job Site Name
-                <input
-                  type="text"
-                  value={siteName}
-                  readOnly
-                  placeholder="(auto-fills from Site ID)"
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-bg/40 text-text-secondary"
-                />
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-1">
-                Type
-                <select
-                  value={exType}
-                  onChange={(e) => setExType(e.target.value)}
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
-                >
-                  {EXCEPTION_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-3">
-                Note
-                <input
-                  type="text"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="What did the field team say? (e.g. 'Closed for inventory')"
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
-                />
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary">
-                Source
-                <select
-                  value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px] bg-surface"
-                >
-                  <option value="phone">Phone</option>
-                  <option value="email">Email</option>
-                  <option value="sms">SMS</option>
-                  <option value="manual">Manual</option>
-                </select>
-              </label>
-              <label className="text-[12px] font-medium text-text-secondary sm:col-span-2">
-                Reporter (optional)
-                <input
-                  type="text"
-                  value={reporter}
-                  onChange={(e) => setReporter(e.target.value)}
-                  placeholder="Who told us? e.g. 'Store mgr Maria'"
-                  className="mt-1 w-full border border-border rounded px-3 py-2 text-[13px]"
-                />
-              </label>
+              <div className="text-center">
+                <h3 className="text-[22px] font-bold tracking-wide text-text-primary">EXCEPTIONS FORM</h3>
+                <p className="text-[12px] text-text-secondary mt-1 italic">
+                  Stores listed below will be ignored — make no adjustments today.
+                </p>
+              </div>
 
-              {error && (
-                <div className="sm:col-span-3 text-[12px] text-danger">{error}</div>
-              )}
+              <div className="overflow-x-auto border border-border rounded">
+                <table className="w-full text-[12px] tabular border-collapse">
+                  <thead>
+                    <tr className="bg-yellow-200">
+                      <th colSpan={2} className="border border-border px-2 py-1 text-center font-bold uppercase text-danger tracking-wide">
+                        Below stores — ignore notes — make no adjustments
+                      </th>
+                    </tr>
+                    <tr className="bg-yellow-100">
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left w-[180px]">Store #</th>
+                      <th className="border border-border px-2 py-1 font-semibold text-text-primary text-left">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkRows.map((r, i) => (
+                      <tr key={i} className="bg-yellow-50">
+                        <td className="border border-border p-0">
+                          <input
+                            type="text"
+                            value={r.store}
+                            onChange={(e) => updateBulkRow(i, { store: e.target.value })}
+                            placeholder="T1517"
+                            className="w-full px-2 py-1 text-[13px] tabular font-semibold uppercase bg-transparent"
+                          />
+                        </td>
+                        <td className="border border-border p-0">
+                          <input
+                            type="text"
+                            value={r.note}
+                            onChange={(e) => updateBulkRow(i, { note: e.target.value })}
+                            placeholder="6/2 short staff"
+                            className="w-full px-2 py-1 text-[13px] bg-transparent"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-              <div className="sm:col-span-3 flex justify-end gap-2">
+              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 pt-2">
+                <label className="text-[12px] font-semibold text-text-secondary">
+                  Reporter (optional)
+                  <input
+                    type="text"
+                    value={reporter}
+                    onChange={(e) => setReporter(e.target.value)}
+                    placeholder="Who told us? e.g. 'Store mgr Maria'"
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-yellow-50"
+                  />
+                </label>
+                <label className="text-[12px] font-semibold text-text-secondary">
+                  Source
+                  <select
+                    value={source}
+                    onChange={(e) => setSource(e.target.value)}
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface"
+                  >
+                    <option value="phone">Phone</option>
+                    <option value="email">Email</option>
+                    <option value="sms">SMS</option>
+                    <option value="manual">Manual</option>
+                  </select>
+                </label>
+              </div>
+
+              {error && <div className="text-[12px] text-danger">{error}</div>}
+
+              <div className="flex justify-end gap-2 pt-1">
                 <button
                   type="button"
-                  onClick={() => {
-                    setShowAdd(false);
-                    reset();
-                  }}
+                  onClick={() => { setShowAdd(false); reset(); }}
                   className="text-[13px] font-semibold text-text-secondary hover:text-text-primary px-3 py-1.5"
                 >
                   Cancel
@@ -1884,7 +1851,7 @@ function StoreExceptionsCard({ onChange }: { onChange: () => void }) {
                   disabled={saving}
                   className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
                 >
-                  {saving ? "Saving…" : "Save exception"}
+                  {saving ? "Saving…" : "Save exceptions"}
                 </button>
               </div>
             </form>
