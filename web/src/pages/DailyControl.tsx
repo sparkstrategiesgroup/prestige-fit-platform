@@ -676,9 +676,7 @@ export default function DailyControl() {
         {nextBlock && (() => {
           const status = statusFor(nextBlock, ctNow);
           const recommend: "warning" | "clocked_out" =
-            status.status === "past" || (status.status === "due" && mins <= 0)
-              ? "clocked_out"
-              : "warning";
+            status.status === "past" ? "clocked_out" : "warning";
           const due = status.status === "due";
           return (
             <section
