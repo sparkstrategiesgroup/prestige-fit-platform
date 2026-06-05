@@ -545,9 +545,13 @@ export default function DailyControl() {
   // Open-punch count per shift block, mapped via labor_control_tracking.
   // Used to size the badge on each checkpoint tile.
   const openByBlock: Record<number, number> = {};
+  const totalByBlock: Record<number, number> = {};
   for (const r of lct) {
-    if (!r.time_out && r.shift_block_id) {
-      openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+    if (r.shift_block_id) {
+      totalByBlock[r.shift_block_id] = (totalByBlock[r.shift_block_id] ?? 0) + 1;
+      if (!r.time_out) {
+        openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+      }
     }
   }
   // Chain options for the filter row (only show chains that have a tile).
@@ -684,7 +688,6 @@ export default function DailyControl() {
               ? "clocked_out"
               : "warning";
           const due = status.status === "due";
-          const count = nextEligible?.blockId === nextBlock.id ? nextEligible.count : null;
           return (
             <section
               className={`rounded-xl shadow-sm border p-6 ${
@@ -698,44 +701,30 @@ export default function DailyControl() {
                   <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
                     {due ? "Due now" : "Next punch-out"}
                   </div>
-                  <h2 className="text-[28px] font-bold text-text-primary leading-tight mt-1 tabular">
+                  <h2 className="text-[28px] font-bold text-warning leading-tight mt-1 tabular">
                     {nextBlock.label.toUpperCase()}
                   </h2>
                   <div className="text-[14px] text-text-secondary mt-1 tabular">
                     {when}
-                    {count !== null && (
-                      <>
-                        {" · "}
-                        <strong className="text-text-primary">{count}</strong>{" "}
-                        {count === 1 ? "person" : "people"} ready to text
-                      </>
-                    )}
+                    {" · "}
+                    <strong className="text-text-primary">{latestImport?.row_count ?? lct.length}</strong> rows in latest file
+                    {" · "}
+                    <strong className="text-text-primary">{totalByBlock[nextBlock.id] ?? 0}</strong> punches in this shift
                   </div>
                 </div>
                 <button
                   onClick={() => previewBlock(nextBlock)}
                   disabled={!!running}
-                  className={`text-[15px] font-semibold px-6 py-3 rounded-lg transition-colors disabled:opacity-50 ${
-                    due
-                      ? "bg-warning text-white hover:opacity-90"
-                      : "bg-blue-1 text-white hover:bg-blue-2"
-                  }`}
+                  className="text-[15px] font-semibold px-6 py-3 rounded-lg transition-colors disabled:opacity-50 bg-warning text-white hover:opacity-90"
                 >
                   Review and send →
                 </button>
               </div>
               {/* Secondary actions inline */}
-              <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-text-secondary">
-                <a href="#todays-punches" className="hover:text-text-primary">
-                  {latestImport?.row_count ?? lct.length} punches loaded ↓
-                </a>
-                <span>·</span>
-                <a href="#store-exceptions" className="hover:text-text-primary">
-                  Manage store exceptions
-                </a>
+              <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-warning font-semibold">
                 <span className="ml-auto">
                   Recommended:{" "}
-                  <strong className="text-text-primary">
+                  <strong>
                     {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
                   </strong>
                 </span>
