@@ -51,15 +51,20 @@ function timeToMinutes(t: string): number {
   return (h ?? 0) * 60 + (m ?? 0);
 }
 
-export function ShiftChangeRequestCard() {
+export function ShiftChangeRequestCard({
+  standalone = false,
+}: {
+  /** When true (e.g. /shift-form), the card opens with the form ready. */
+  standalone?: boolean;
+} = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<Revision[]>([]);
   const [recipients, setRecipients] = useState<Recipient[]>([]);
   const [showRecipients, setShowRecipients] = useState(false);
   const [newRecipientEmail, setNewRecipientEmail] = useState("");
   const [newRecipientName, setNewRecipientName] = useState("");
-  const [open, setOpen] = useState(false);
-  const [showAdd, setShowAdd] = useState(false);
+  const [open, setOpen] = useState(standalone);
+  const [showAdd, setShowAdd] = useState(standalone);
 
   // Site identification
   const [regionDept, setRegionDept] = useState("");

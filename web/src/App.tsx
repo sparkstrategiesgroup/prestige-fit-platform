@@ -3,6 +3,8 @@ import { TabNav, type TabDef } from "./components/TabNav";
 import DailyControl from "./pages/DailyControl";
 import Scheduling from "./pages/Scheduling";
 import Reports from "./pages/Reports";
+import ShiftFormPage from "./pages/ShiftFormPage";
+import ExceptionsFormPage from "./pages/ExceptionsFormPage";
 
 /**
  * 3 tabs. Overview / Punch & PAM / Shift Coverage / Compliance pages
@@ -24,6 +26,9 @@ export default function App() {
           <Route path="/daily-control" element={<DailyControl />} />
           <Route path="/scheduling" element={<Scheduling />} />
           <Route path="/reports" element={<Reports />} />
+          {/* Standalone field-facing forms — shareable links, no tab in the nav. */}
+          <Route path="/shift-form" element={<ShiftFormPage />} />
+          <Route path="/exceptions-form" element={<ExceptionsFormPage />} />
           {/* Legacy routes redirect rather than 404 so any bookmarks land safely. */}
           <Route path="/overview" element={<Navigate to="/daily-control" replace />} />
           <Route path="/punch-pam" element={<Navigate to="/daily-control" replace />} />
