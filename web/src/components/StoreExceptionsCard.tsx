@@ -40,6 +40,18 @@ const EXCEPTION_REASONS = [
   "Other",
 ];
 
+// "06/15 02:45 PM" in Central time — the captured timestamp the operator sees
+// next to each saved exception row.
+const fmtCapturedAt = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).replace(",", "");
+
 export function StoreExceptionsCard({
   onChange,
   standalone = false,
@@ -409,6 +421,7 @@ export function StoreExceptionsCard({
               <table className="w-full text-[12px] tabular">
                 <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
                   <tr>
+                    <th className="text-left px-3 py-2 font-semibold w-[110px]">Date</th>
                     <th className="text-left px-3 py-2 font-semibold w-[100px]">Job&nbsp;site&nbsp;ID</th>
                     <th className="text-left px-3 py-2 font-semibold">Job&nbsp;site&nbsp;name</th>
                     <th className="text-left px-3 py-2 font-semibold w-[180px]">Reason</th>
@@ -423,6 +436,7 @@ export function StoreExceptionsCard({
                     if (isEditing) {
                       return (
                         <tr key={r.id} className="bg-yellow-50">
+                          <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtCapturedAt(r.created_at)}</td>
                           <td className="px-3 py-1.5">
                             <input
                               type="text"
@@ -493,6 +507,7 @@ export function StoreExceptionsCard({
                     }
                     return (
                       <tr key={r.id}>
+                        <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtCapturedAt(r.created_at)}</td>
                         <td className="px-3 py-1.5 font-semibold text-text-primary">{r.site_id}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-primary">{r.note ?? "—"}</td>
