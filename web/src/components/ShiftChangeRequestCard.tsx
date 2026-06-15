@@ -90,11 +90,12 @@ export function ShiftChangeRequestCard({
 
   const [effective, setEffective] = useState(today);
   const [lastChangeDate, setLastChangeDate] = useState<string | null>(null);
+  const [allSites, setAllSites] = useState<{ site_id: string; site_name: string | null }[]>([]);
 
   // Operational metadata
   const [note, setNote] = useState("");
   const [reporter, setReporter] = useState("");
-  const [source, setSource] = useState("phone");
+  const [source, setSource] = useState("fit");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -228,7 +229,19 @@ export function ShiftChangeRequestCard({
     setRecipients((data ?? []) as Recipient[]);
   };
 
-  useEffect(() => { load(); loadRecipients(); }, []);
+  useEffect(() => {
+    load();
+    loadRecipients();
+    // Cache the full site list once so the Store # input can show a
+    // native typeahead dropdown of every job site.
+    (async () => {
+      const { data } = await supabase
+        .from("site")
+        .select("site_id, site_name")
+        .order("site_id");
+      setAllSites((data ?? []) as { site_id: string; site_name: string | null }[]);
+    })();
+  }, []);
 
   const addRecipient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -272,7 +285,7 @@ export function ShiftChangeRequestCard({
     setEffective(today);
     setNote("");
     setReporter("");
-    setSource("phone");
+    setSource("fit");
     setError(null);
   };
 
@@ -617,11 +630,20 @@ export function ShiftChangeRequestCard({
                 </div>
                 <div className="grid grid-cols-[140px_1fr] items-center gap-2">
                   <span className="text-[12px] font-semibold text-text-secondary text-right">Store #:</span>
-                  <input type="text" value={siteId}
+                  <input
+                    type="text"
+                    list="store-options"
+                    value={siteId}
                     onChange={(e) => setSiteId(e.target.value)}
                     placeholder="H3014"
                     className="border border-border rounded px-2 py-1 text-[13px] tabular font-semibold uppercase bg-yellow-50"
-                    autoFocus />
+                    autoFocus
+                  />
+                  <datalist id="store-options">
+                    {allSites.map((s) => (
+                      <option key={s.site_id} value={s.site_id}>{s.site_name ?? ""}</option>
+                    ))}
+                  </datalist>
                 </div>
                 <div className="grid grid-cols-[160px_1fr] items-center gap-2">
                   <span className="text-[12px] font-semibold text-text-secondary text-right">Total Weekly Hours:</span>
@@ -749,9 +771,10 @@ export function ShiftChangeRequestCard({
                   <select value={source}
                     onChange={(e) => setSource(e.target.value)}
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface">
+                    <option value="fit">FIT</option>
                     <option value="phone">Phone</option>
-                    <option value="sms">SMS / Text</option>
                     <option value="email">Email</option>
+                    <option value="sms">SMS</option>
                     <option value="manual">Manual</option>
                   </select>
                 </label>
