@@ -91,6 +91,8 @@ export function ShiftChangeRequestCard({
   const [effective, setEffective] = useState(today);
   const [lastChangeDate, setLastChangeDate] = useState<string | null>(null);
   const [allSites, setAllSites] = useState<{ site_id: string; site_name: string | null }[]>([]);
+  const [storeMenuOpen, setStoreMenuOpen] = useState(false);
+  const [storeHover, setStoreHover] = useState(0);
 
   // Operational metadata
   const [note, setNote] = useState("");
@@ -633,20 +635,62 @@ export function ShiftChangeRequestCard({
                 </div>
                 <div className="grid grid-cols-[140px_1fr] items-center gap-2">
                   <span className="text-[12px] font-semibold text-text-secondary text-right">Store #:</span>
-                  <input
-                    type="text"
-                    list="store-options"
-                    value={siteId}
-                    onChange={(e) => setSiteId(e.target.value)}
-                    placeholder="H3014"
-                    className="border border-border rounded px-2 py-1 text-[13px] tabular font-semibold uppercase bg-yellow-50"
-                    autoFocus
-                  />
-                  <datalist id="store-options">
-                    {allSites.map((s) => (
-                      <option key={s.site_id} value={s.site_id}>{s.site_name ?? ""}</option>
-                    ))}
-                  </datalist>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={siteId}
+                      onChange={(e) => { setSiteId(e.target.value); setStoreMenuOpen(true); setStoreHover(0); }}
+                      onFocus={() => setStoreMenuOpen(true)}
+                      onBlur={() => setTimeout(() => setStoreMenuOpen(false), 150)}
+                      onKeyDown={(e) => {
+                        const filtered = allSites.filter((s) => {
+                          if (!siteId.trim()) return true;
+                          const q = siteId.trim().toUpperCase();
+                          return s.site_id.toUpperCase().includes(q)
+                            || (s.site_name ?? "").toUpperCase().includes(q);
+                        });
+                        if (e.key === "ArrowDown") { e.preventDefault(); setStoreHover((h) => Math.min(h + 1, filtered.length - 1)); }
+                        else if (e.key === "ArrowUp") { e.preventDefault(); setStoreHover((h) => Math.max(h - 1, 0)); }
+                        else if (e.key === "Enter" && storeMenuOpen && filtered[storeHover]) {
+                          e.preventDefault();
+                          setSiteId(filtered[storeHover].site_id);
+                          setStoreMenuOpen(false);
+                        } else if (e.key === "Escape") {
+                          setStoreMenuOpen(false);
+                        }
+                      }}
+                      placeholder="Type or pick a store…"
+                      className="w-full border border-border rounded px-2 py-1 text-[13px] tabular font-semibold uppercase bg-yellow-50"
+                      autoFocus
+                    />
+                    {storeMenuOpen && (() => {
+                      const q = siteId.trim().toUpperCase();
+                      const filtered = (q
+                        ? allSites.filter((s) =>
+                            s.site_id.toUpperCase().includes(q)
+                            || (s.site_name ?? "").toUpperCase().includes(q))
+                        : allSites
+                      ).slice(0, 200);
+                      if (filtered.length === 0) return null;
+                      return (
+                        <ul className="absolute z-20 left-0 right-0 top-full mt-1 max-h-72 overflow-y-auto border border-border rounded-md bg-surface shadow-lg text-[12px]">
+                          {filtered.map((s, i) => (
+                            <li
+                              key={s.site_id}
+                              onMouseDown={(e) => { e.preventDefault(); setSiteId(s.site_id); setStoreMenuOpen(false); }}
+                              onMouseEnter={() => setStoreHover(i)}
+                              className={`px-3 py-1.5 cursor-pointer flex justify-between gap-3 ${
+                                i === storeHover ? "bg-blue-1/10" : ""
+                              }`}
+                            >
+                              <span className="font-semibold tabular text-text-primary">{s.site_id}</span>
+                              <span className="text-text-secondary truncate">{s.site_name ?? ""}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      );
+                    })()}
+                  </div>
                 </div>
                 <div className="grid grid-cols-[160px_1fr] items-center gap-2">
                   <span className="text-[12px] font-semibold text-text-secondary text-right">Total Weekly Hours:</span>
