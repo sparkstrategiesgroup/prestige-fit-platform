@@ -287,6 +287,15 @@ export function ShiftChangeRequestCard({
   }, {});
   const totalWeeklyHours = shiftRows.reduce((s, r) => s + rowWeeklyTotal(r), 0);
 
+  // Variance vs the WinTeam budget the operator typed in. 0 means
+  // "matches" (or budget field is blank). Used to require an explanatory
+  // Note whenever the proposed total doesn't match what WinTeam expects.
+  const budgetNumber = parseFloat(budgetWinteam);
+  const budgetVariance = Number.isFinite(budgetNumber)
+    ? Math.round((totalWeeklyHours - budgetNumber) * 10) / 10
+    : 0;
+  const noteRequired = budgetVariance !== 0;
+
   const reset = () => {
     setRegionDept("");
     setSiteId("");
@@ -316,6 +325,11 @@ export function ShiftChangeRequestCard({
       (r) => r.role.trim() && r.start && r.end && r.days.some((d) => parseInt(d || "0", 10) > 0),
     );
     if (filledRows.length === 0) return setError("Add at least one shift row with role, times, and a day count");
+    if (budgetVariance !== 0 && !note.trim()) {
+      return setError(
+        `Note is required: total hours (${totalWeeklyHours.toFixed(1)}) ${budgetVariance > 0 ? "exceed" : "are below"} WinTeam budget (${budgetWinteam})`,
+      );
+    }
 
     setSaving(true);
     setError(null);
@@ -828,8 +842,16 @@ export function ShiftChangeRequestCard({
                   </div>
                 </label>
                 <label className="text-[12px] font-semibold text-text-secondary sm:col-span-2">
-                  Note (optional)
+                  {noteRequired ? (
+                    <>
+                      Note <span className="text-danger">*</span>
+                      <span className="ml-2 font-normal text-danger normal-case">
+                        Required — total hours ({totalWeeklyHours.toFixed(1)}) {budgetVariance > 0 ? "exceed" : "are below"} WinTeam budget ({budgetWinteam}) by {Math.abs(budgetVariance).toFixed(1)}
+                      </span>
+                    </>
+                  ) : "Note (optional)"}
                   <input type="text" value={note}
+                    required={noteRequired}
                     onChange={(e) => setNote(e.target.value)}
                     placeholder='Joe out Thu; Marcia covering. New shift starts 6/9.'
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px]" />
