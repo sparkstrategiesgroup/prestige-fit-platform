@@ -1,0 +1,33 @@
+# Supabase project configuration
+# Per-function JWT verification posture. Webhooks called by Power Automate
+# authenticate with the x-fit-shared-secret header + sender allowlist instead
+# of a Supabase JWT, so they explicitly opt out. Everything else verifies.
+
+project_id = "sshhcpzleurztzksrlvr"
+
+[functions.epay-import-email]
+verify_jwt = false  # Power Automate webhook; uses x-fit-shared-secret
+
+[functions.notify-summary-email]
+verify_jwt = false  # Power Automate webhook; uses x-fit-shared-secret
+
+[functions.epay-import]
+verify_jwt = true
+
+[functions.awr-import]
+verify_jwt = true
+
+[functions.master-schedule-import]
+verify_jwt = true
+
+[functions.master-schedule-apply]
+verify_jwt = true
+
+[functions.blueforce-tracker-import]
+verify_jwt = true
+
+[functions.wt-budget-export]
+verify_jwt = true
+
+[functions.shift-block-runner]
+verify_jwt = true
