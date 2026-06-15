@@ -65,6 +65,14 @@ export function StoreExceptionsCard({
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<StoreException[]>([]);
+  const [filter, setFilter] = useState("");
+  const [sortKey, setSortKey] = useState<"site_id" | "job_site_name" | "note" | "reporter" | "source" | "created_at">("site_id");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const toggleSort = (k: typeof sortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(k); setSortDir("asc"); }
+  };
+  const sortArrow = (k: typeof sortKey) => k === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
   const [open, setOpen] = useState(standalone);
   const [showAdd, setShowAdd] = useState(standalone);
   const [bulkRows, setBulkRows] = useState<BulkExceptionRow[]>(() =>
@@ -424,23 +432,62 @@ export function StoreExceptionsCard({
             </form>
           )}
 
-          {rows.length > 0 && (
+          {rows.length > 0 && (() => {
+            const q = filter.trim().toUpperCase();
+            const filtered = q
+              ? rows.filter((r) =>
+                  r.site_id.toUpperCase().includes(q)
+                  || (r.job_site_name ?? "").toUpperCase().includes(q))
+              : rows;
+            const sortVal = (r: StoreException) => {
+              switch (sortKey) {
+                case "site_id":        return r.site_id;
+                case "job_site_name":  return (r.job_site_name ?? "").toLowerCase();
+                case "note":           return (r.note ?? "").toLowerCase();
+                case "reporter":       return (r.reporter ?? "").toLowerCase();
+                case "source":         return r.source;
+                case "created_at":     return r.created_at;
+              }
+            };
+            const displayed = [...filtered].sort((a, b) => {
+              const av = sortVal(a), bv = sortVal(b);
+              if (av < bv) return sortDir === "asc" ? -1 : 1;
+              if (av > bv) return sortDir === "asc" ? 1 : -1;
+              return 0;
+            });
+            const headerCls = "text-left px-3 py-2 font-semibold cursor-pointer select-none hover:text-text-primary";
+            return (
+            <>
+            <div className="flex items-center gap-2 pb-2">
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter by Job site ID or name…"
+                className="w-full max-w-sm border border-border rounded px-3 py-1.5 text-[12px] bg-surface"
+              />
+              {filter && (
+                <button onClick={() => setFilter("")} className="text-[11px] text-text-secondary hover:text-text-primary">
+                  Clear
+                </button>
+              )}
+              <span className="text-[11px] text-text-muted ml-auto">{displayed.length} of {rows.length}</span>
+            </div>
             <div className="border border-border rounded-lg overflow-hidden">
               <table className="w-full text-[12px] tabular">
                 <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Job&nbsp;site&nbsp;ID</th>
-                    <th className="text-left px-3 py-2 font-semibold">Job&nbsp;site&nbsp;name</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Reason</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Reporter</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Source</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[70px]">Date</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[90px]">Time</th>
+                    <th onClick={() => toggleSort("site_id")} className={headerCls + " w-[110px]"}>Job&nbsp;site&nbsp;ID{sortArrow("site_id")}</th>
+                    <th onClick={() => toggleSort("job_site_name")} className={headerCls}>Job&nbsp;site&nbsp;name{sortArrow("job_site_name")}</th>
+                    <th onClick={() => toggleSort("note")} className={headerCls + " w-[190px]"}>Reason{sortArrow("note")}</th>
+                    <th onClick={() => toggleSort("reporter")} className={headerCls + " w-[190px]"}>Reporter{sortArrow("reporter")}</th>
+                    <th onClick={() => toggleSort("created_at")} className={headerCls + " w-[80px]"}>Date{sortArrow("created_at")}</th>
+                    <th onClick={() => toggleSort("created_at")} className={headerCls + " w-[100px]"}>Time{sortArrow("created_at")}</th>
                     <th className="px-3 py-2 w-[120px]"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
-                  {rows.map((r) => {
+                  {displayed.map((r) => {
                     const isEditing = editingId === r.id && editDraft;
                     if (isEditing) {
                       return (
@@ -484,18 +531,6 @@ export function StoreExceptionsCard({
                               className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
                             />
                           </td>
-                          <td className="px-3 py-1.5">
-                            <select
-                              value={editDraft.source}
-                              onChange={(e) => setEditDraft({ ...editDraft, source: e.target.value })}
-                              className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
-                            >
-                              <option value="phone">Phone</option>
-                              <option value="email">Email</option>
-                              <option value="sms">SMS</option>
-                              <option value="manual">Manual</option>
-                            </select>
-                          </td>
                           <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtDate(r.created_at)}</td>
                           <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtTime(r.created_at)}</td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -521,7 +556,6 @@ export function StoreExceptionsCard({
                         <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-primary">{r.note ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
-                        <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
                         <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtDate(r.created_at)}</td>
                         <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtTime(r.created_at)}</td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
@@ -544,7 +578,9 @@ export function StoreExceptionsCard({
                 </tbody>
               </table>
             </div>
-          )}
+            </>
+            );
+          })()}
         </div>
       )}
     </section>
