@@ -279,6 +279,12 @@ export function ShiftChangeRequestCard({
     const dayTotal = r.days.reduce((s, d) => s + (parseInt(d || "0", 10) || 0), 0);
     return dayTotal * rowShiftTotal(r);
   }
+  const hoursByRole = shiftRows.reduce<Record<string, number>>((acc, r) => {
+    const role = r.role.trim();
+    if (!role) return acc;
+    acc[role] = (acc[role] ?? 0) + rowWeeklyTotal(r);
+    return acc;
+  }, {});
   const totalWeeklyHours = shiftRows.reduce((s, r) => s + rowWeeklyTotal(r), 0);
 
   const reset = () => {
@@ -315,6 +321,10 @@ export function ShiftChangeRequestCard({
     setError(null);
 
     const site = siteId.trim().toUpperCase();
+    const byRoleStr = Object.entries(hoursByRole)
+      .filter(([, h]) => h > 0)
+      .map(([role, h]) => `${role}=${h.toFixed(1)}`)
+      .join(";");
     const tag = [
       MANUAL_TAG,
       regionDept.trim() ? `region/dept: ${regionDept.trim()}` : null,
@@ -324,7 +334,8 @@ export function ShiftChangeRequestCard({
       `source: ${source}`,
       `eff: ${effective}`,
       `rows: ${filledRows.length}`,
-      `weekly: ${totalWeeklyHours.toFixed(1)}`,
+      `hours: ${totalWeeklyHours.toFixed(1)}`,
+      byRoleStr ? `byrole: ${byRoleStr}` : null,
       note.trim() ? `note: ${note.trim()}` : null,
     ].filter(Boolean).join(" · ");
 
@@ -694,8 +705,18 @@ export function ShiftChangeRequestCard({
                 </div>
                 <div className="grid grid-cols-[160px_1fr] items-center gap-2">
                   <span className="text-[12px] font-semibold text-text-secondary text-right">Total Weekly Hours:</span>
-                  <div className="border border-border rounded px-2 py-1 text-[13px] tabular bg-bg/40 font-semibold">
-                    {totalWeeklyHours.toFixed(1)}
+                  <div>
+                    <div className="border border-border rounded px-2 py-1 text-[13px] tabular bg-bg/40 font-semibold inline-block">
+                      {totalWeeklyHours.toFixed(1)}
+                    </div>
+                    {Object.keys(hoursByRole).length > 0 && (
+                      <div className="mt-1 text-[11px] text-text-secondary tabular">
+                        {Object.entries(hoursByRole)
+                          .filter(([, h]) => h > 0)
+                          .map(([role, h]) => `${role} ${h.toFixed(1)}`)
+                          .join(" · ")}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="grid grid-cols-[140px_1fr] items-center gap-2">
@@ -895,7 +916,14 @@ export function ShiftChangeRequestCard({
                         <td className="px-3 py-1.5 text-text-secondary">{tag["reporter"] ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{tag["source"] ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{tag["eff"] ?? "—"}</td>
-                        <td className="px-3 py-1.5 text-text-secondary tabular">{tag["hours"] ?? "—"}</td>
+                        <td className="px-3 py-1.5 text-text-secondary tabular">
+                          <div>{tag["hours"] ?? tag["weekly"] ?? "—"}</div>
+                          {tag["byrole"] && (
+                            <div className="text-[10px] text-text-muted">
+                              {tag["byrole"].split(";").map((p) => p.replace("=", " ")).join(" · ")}
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-1.5 text-text-secondary">{tag["note"] ?? r.notes ?? "—"}</td>
                       </tr>
                     );
