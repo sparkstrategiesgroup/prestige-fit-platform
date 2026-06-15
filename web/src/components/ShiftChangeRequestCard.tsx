@@ -89,6 +89,7 @@ export function ShiftChangeRequestCard({
   );
 
   const [effective, setEffective] = useState(today);
+  const [lastChangeDate, setLastChangeDate] = useState<string | null>(null);
 
   // Operational metadata
   const [note, setNote] = useState("");
@@ -104,7 +105,11 @@ export function ShiftChangeRequestCard({
   // SHIFT FORM table with start/end/days so the operator only edits
   // what's changing.
   useEffect(() => {
-    if (!siteId.trim()) { setSiteName(""); return; }
+    if (!siteId.trim()) {
+      setSiteName("");
+      setLastChangeDate(null);
+      return;
+    }
     const handle = setTimeout(async () => {
       const code = siteId.trim().toUpperCase();
       const { data: siteRow } = await supabase.from("site")
@@ -112,10 +117,41 @@ export function ShiftChangeRequestCard({
         .eq("site_id", code).maybeSingle();
       if (!siteRow) {
         setSiteName("");
+        setLastChangeDate(null);
         return;
       }
       setSiteName(siteRow.site_name ?? "");
-      if (siteRow.region_code) setRegionDept(siteRow.region_code);
+
+      // Department number associated with the WinTeam budget for this site,
+      // sourced from winteam_job_tier_parameters keyed by job_number.
+      // Falls back to the site's region_code if WinTeam has no record.
+      const { data: tierRow } = await supabase
+        .from("winteam_job_tier_parameters")
+        .select("dept_code, dept_description")
+        .eq("job_number", code)
+        .order("effective_date", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle();
+      if (tierRow?.dept_code) {
+        setRegionDept(tierRow.dept_code);
+      } else if (siteRow.region_code) {
+        setRegionDept(siteRow.region_code);
+      }
+
+      // Last change date — most recent applied master_schedule_revision that
+      // touched this site. Empty if no prior change has been logged for it.
+      const { data: lastChange } = await supabase
+        .from("master_schedule_change")
+        .select("revision_id, master_schedule_revision!inner(applied_at, status)")
+        .eq("site_id", code)
+        .eq("master_schedule_revision.status", "applied")
+        .order("revision_id", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const applied = (lastChange as unknown as
+        { master_schedule_revision?: { applied_at?: string } | null } | null)
+        ?.master_schedule_revision?.applied_at ?? null;
+      setLastChangeDate(applied ? applied.slice(0, 10) : null);
 
       // Prefer schedule_slot rows when present (Schedule Report has
       // landed). Otherwise derive defaults from job_site_schedules + the
@@ -598,6 +634,12 @@ export function ShiftChangeRequestCard({
                   <input type="date" value={effective}
                     onChange={(e) => setEffective(e.target.value)}
                     className="border border-border rounded px-2 py-1 text-[13px] tabular bg-yellow-50" />
+                </div>
+                <div className="grid grid-cols-[160px_1fr] items-center gap-2">
+                  <span className="text-[12px] font-semibold text-text-secondary text-right">Last Change Date:</span>
+                  <div className="border border-border rounded px-2 py-1 text-[13px] tabular bg-bg/40 text-text-secondary">
+                    {lastChangeDate ?? "—"}
+                  </div>
                 </div>
                 {siteName && (
                   <div className="grid grid-cols-[140px_1fr] items-center gap-2">
