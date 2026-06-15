@@ -53,9 +53,13 @@ function timeToMinutes(t: string): number {
 
 export function ShiftChangeRequestCard({
   standalone = false,
+  fullHistory = false,
 }: {
   /** When true (e.g. /shift-form), the card opens with the form ready. */
   standalone?: boolean;
+  /** When true (e.g. /reports), load every revision ever logged and hide
+   * the submission form / + Add button. */
+  fullHistory?: boolean;
 } = {}) {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<Revision[]>([]);
@@ -63,8 +67,8 @@ export function ShiftChangeRequestCard({
   const [showRecipients, setShowRecipients] = useState(false);
   const [newRecipientEmail, setNewRecipientEmail] = useState("");
   const [newRecipientName, setNewRecipientName] = useState("");
-  const [open, setOpen] = useState(standalone);
-  const [showAdd, setShowAdd] = useState(standalone);
+  const [open, setOpen] = useState(standalone || fullHistory);
+  const [showAdd, setShowAdd] = useState(standalone && !fullHistory);
 
   // Site identification
   const [regionDept, setRegionDept] = useState("");
@@ -212,13 +216,15 @@ export function ShiftChangeRequestCard({
   }, [siteId]);
 
   const load = async () => {
-    const { data } = await supabase
-      .from("master_schedule_revision")
-      .select("*")
-      .gte("uploaded_at", today + "T00:00:00")
-      .ilike("source_filename", "%manual%")
-      .order("uploaded_at", { ascending: false })
-      .limit(20);
+    const base = supabase.from("master_schedule_revision").select("*");
+    const query = fullHistory
+      ? base.order("uploaded_at", { ascending: false }).limit(1000)
+      : base
+          .gte("uploaded_at", today + "T00:00:00")
+          .ilike("source_filename", "%manual%")
+          .order("uploaded_at", { ascending: false })
+          .limit(20);
+    const { data } = await query;
     setRows((data ?? []) as Revision[]);
   };
 
@@ -514,6 +520,8 @@ export function ShiftChangeRequestCard({
 
       {open && (
         <div className="px-5 pb-5 space-y-4">
+          {!fullHistory && (
+          <>
           {/* Tuesday reminder → Thursday COB deadline banner */}
           <div className={`flex items-center gap-3 flex-wrap px-3 py-2 rounded-lg border text-[12px] ${
             inWindow
@@ -613,24 +621,28 @@ export function ShiftChangeRequestCard({
               </form>
             </div>
           )}
+          </>
+          )}
 
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] text-text-secondary">
-              {rows.length === 0
-                ? "No shift change requests logged for today."
-                : `${pendingCount} pending · ${rows.length} total today.`}
-            </span>
-            {!showAdd && (
-              <button
-                onClick={() => setShowAdd(true)}
-                className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
-              >
-                + Add shift change
-              </button>
-            )}
-          </div>
+          {!fullHistory && (
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] text-text-secondary">
+                {rows.length === 0
+                  ? "No shift change requests logged for today."
+                  : `${pendingCount} pending · ${rows.length} total today.`}
+              </span>
+              {!showAdd && (
+                <button
+                  onClick={() => setShowAdd(true)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  + Add shift change
+                </button>
+              )}
+            </div>
+          )}
 
-          {showAdd && (
+          {showAdd && !fullHistory && (
             <form
               onSubmit={submit}
               className="bg-white border border-border rounded-lg p-6 space-y-5"
@@ -856,14 +868,6 @@ export function ShiftChangeRequestCard({
                     placeholder='Joe out Thu; Marcia covering. New shift starts 6/9.'
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px]" />
                 </label>
-              </div>
-
-              <div className="bg-bg/60 border border-border rounded p-3 text-[12px] text-text-secondary">
-                <div className="font-bold text-text-primary mb-1">Office Use Only:</div>
-                <ul className="list-disc pl-5 space-y-0.5">
-                  <li>Notify SDO for approval if requesting daily overtime on schedule.</li>
-                  <li>SDO must approve any labor pattern change — INCREASE in number of hours per week.</li>
-                </ul>
               </div>
 
               {error && <div className="text-[12px] text-danger">{error}</div>}

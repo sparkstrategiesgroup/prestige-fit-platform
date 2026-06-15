@@ -58,23 +58,27 @@ const fmtTime = (iso: string) =>
 export function StoreExceptionsCard({
   onChange,
   standalone = false,
+  fullHistory = false,
 }: {
   onChange: () => void;
   /** When true (e.g. /exceptions-form), the card opens with the form ready. */
   standalone?: boolean;
+  /** When true (e.g. /reports), load every record ever logged - drop the
+   * today + active filters and hide the bulk-paste form. */
+  fullHistory?: boolean;
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const [rows, setRows] = useState<StoreException[]>([]);
   const [filter, setFilter] = useState("");
-  const [sortKey, setSortKey] = useState<"site_id" | "job_site_name" | "note" | "reporter" | "source" | "created_at">("site_id");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [sortKey, setSortKey] = useState<"site_id" | "job_site_name" | "note" | "reporter" | "source" | "created_at">(fullHistory ? "created_at" : "site_id");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(fullHistory ? "desc" : "asc");
   const toggleSort = (k: typeof sortKey) => {
     if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(k); setSortDir("asc"); }
   };
   const sortArrow = (k: typeof sortKey) => k === sortKey ? (sortDir === "asc" ? " ▲" : " ▼") : "";
-  const [open, setOpen] = useState(standalone);
-  const [showAdd, setShowAdd] = useState(standalone);
+  const [open, setOpen] = useState(standalone || fullHistory);
+  const [showAdd, setShowAdd] = useState(standalone && !fullHistory);
   const [bulkRows, setBulkRows] = useState<BulkExceptionRow[]>(() =>
     Array.from({ length: 15 }, blankBulkRow),
   );
@@ -93,16 +97,18 @@ export function StoreExceptionsCard({
     return siteNames.get(code) ?? null;
   };
 
-  // Show today + upcoming so the operator can edit planned exceptions, not
-  // just the ones for today.
+  // Default: today + upcoming active exceptions. With fullHistory the
+  // /reports view loads every record ever logged (cap 1000, newest first).
   const load = async () => {
-    const { data } = await supabase
-      .from("store_exception")
-      .select("*")
-      .gte("exception_date", today)
-      .eq("active", true)
-      .order("exception_date", { ascending: true })
-      .order("created_at", { ascending: false });
+    const base = supabase.from("store_exception").select("*");
+    const query = fullHistory
+      ? base.order("created_at", { ascending: false }).limit(1000)
+      : base
+          .gte("exception_date", today)
+          .eq("active", true)
+          .order("exception_date", { ascending: true })
+          .order("created_at", { ascending: false });
+    const { data } = await query;
     const exceptions = (data ?? []) as StoreException[];
     // Bulk-fetch site names for the listed site IDs and decorate the rows.
     const ids = Array.from(new Set(exceptions.map((r) => r.site_id))).filter(Boolean);
@@ -252,12 +258,13 @@ export function StoreExceptionsCard({
             Store exceptions
             <span className="ml-2 text-text-primary">{rows.length}</span>
             <span className="ml-1 text-text-secondary font-normal normal-case">
-              active today
+              {fullHistory ? "logged (all time)" : "active today"}
             </span>
           </h2>
           <p className="text-[13px] text-text-secondary mt-1">
-            Field-team notes that exclude a site from end-of-shift texting
-            (closures, reduced staffing, "do not text").
+            {fullHistory
+              ? "Every exception ever logged. Sort, filter, edit, or delete from this view."
+              : "Field-team notes that exclude a site from end-of-shift texting (closures, reduced staffing, \"do not text\")."}
           </p>
         </div>
         <span className="text-text-muted text-[12px]">{open ? "Hide ▴" : "Show ▾"}</span>
@@ -265,23 +272,25 @@ export function StoreExceptionsCard({
 
       {open && (
         <div className="px-5 pb-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-[12px] text-text-secondary">
-              {rows.length === 0
-                ? "No exceptions logged for today."
-                : `${rows.length} active.`}
-            </span>
-            {!showAdd && (
-              <button
-                onClick={() => setShowAdd(true)}
-                className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
-              >
-                + Add exception
-              </button>
-            )}
-          </div>
+          {!fullHistory && (
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] text-text-secondary">
+                {rows.length === 0
+                  ? "No exceptions logged for today."
+                  : `${rows.length} active.`}
+              </span>
+              {!showAdd && (
+                <button
+                  onClick={() => setShowAdd(true)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  + Add exception
+                </button>
+              )}
+            </div>
+          )}
 
-          {showAdd && (
+          {showAdd && !fullHistory && (
             <form
               onSubmit={submit}
               className="bg-white border border-border rounded-lg p-6 space-y-5"
