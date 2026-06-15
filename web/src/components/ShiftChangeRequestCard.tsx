@@ -816,7 +816,7 @@ export function ShiftChangeRequestCard({
 
               <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 pt-2">
                 <label className="text-[12px] font-semibold text-text-secondary">
-                  Requestor / CE Team Member
+                  Reporter
                   <input type="text" value={reporter}
                     onChange={(e) => setReporter(e.target.value)}
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-yellow-50" />
@@ -833,18 +833,6 @@ export function ShiftChangeRequestCard({
                     onChange={(e) => setNote(e.target.value)}
                     placeholder='Joe out Thu; Marcia covering. New shift starts 6/9.'
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px]" />
-                </label>
-                <label className="text-[12px] font-semibold text-text-secondary">
-                  Source
-                  <select value={source}
-                    onChange={(e) => setSource(e.target.value)}
-                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface">
-                    <option value="fit">FIT</option>
-                    <option value="phone">Phone</option>
-                    <option value="email">Email</option>
-                    <option value="sms">SMS</option>
-                    <option value="manual">Manual</option>
-                  </select>
                 </label>
               </div>
 
@@ -885,7 +873,6 @@ export function ShiftChangeRequestCard({
                     <th className="text-left px-3 py-2 font-semibold">Submitted</th>
                     <th className="text-left px-3 py-2 font-semibold">Status</th>
                     <th className="text-left px-3 py-2 font-semibold">Reporter</th>
-                    <th className="text-left px-3 py-2 font-semibold">Source</th>
                     <th className="text-left px-3 py-2 font-semibold">Effective</th>
                     <th className="text-left px-3 py-2 font-semibold">Hours</th>
                     <th className="text-left px-3 py-2 font-semibold">Note</th>
@@ -914,7 +901,6 @@ export function ShiftChangeRequestCard({
                           </span>
                         </td>
                         <td className="px-3 py-1.5 text-text-secondary">{tag["reporter"] ?? "—"}</td>
-                        <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{tag["source"] ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{tag["eff"] ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-secondary tabular">
                           <div>{tag["hours"] ?? tag["weekly"] ?? "—"}</div>
