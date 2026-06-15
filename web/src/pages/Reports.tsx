@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { HeaderBar } from "../components/HeaderBar";
+import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
+import { StoreExceptionsCard } from "../components/StoreExceptionsCard";
 import { supabase } from "../lib/supabase";
 
 const FUNCTIONS_URL = `${
@@ -330,6 +332,9 @@ export default function Reports() {
             </div>
           )}
         </section>
+
+        <ShiftChangeRequestCard fullHistory />
+        <StoreExceptionsCard fullHistory onChange={() => {}} />
       </main>
     </>
   );
