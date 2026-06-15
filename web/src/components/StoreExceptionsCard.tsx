@@ -404,20 +404,6 @@ export function StoreExceptionsCard({
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-yellow-50"
                   />
                 </label>
-                <label className="text-[12px] font-semibold text-text-secondary">
-                  Source
-                  <select
-                    value={source}
-                    onChange={(e) => setSource(e.target.value)}
-                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface"
-                  >
-                    <option value="fit">FIT</option>
-                    <option value="phone">Phone</option>
-                    <option value="email">Email</option>
-                    <option value="sms">SMS</option>
-                    <option value="manual">Manual</option>
-                  </select>
-                </label>
               </div>
 
               {error && <div className="text-[12px] text-danger">{error}</div>}
