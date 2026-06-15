@@ -40,17 +40,20 @@ const EXCEPTION_REASONS = [
   "Other",
 ];
 
-// "06/15 02:45 PM" in Central time — the captured timestamp the operator sees
-// next to each saved exception row.
-const fmtCapturedAt = (iso: string) =>
+// Captured timestamp the operator sees, split into two narrow columns.
+const fmtDate = (iso: string) =>
   new Date(iso).toLocaleString("en-US", {
     timeZone: "America/Chicago",
     month: "2-digit",
     day: "2-digit",
+  });
+const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
-  }).replace(",", "");
+  });
 
 export function StoreExceptionsCard({
   onChange,
@@ -156,6 +159,10 @@ export function StoreExceptionsCard({
       setError("Add at least one Store #");
       return;
     }
+    if (!reporter.trim()) {
+      setError("Reporter is required");
+      return;
+    }
     setSaving(true);
     setError(null);
     const payload = filled.map((r) => {
@@ -168,7 +175,7 @@ export function StoreExceptionsCard({
         exception_type: "other",
         note: reasonLabel,
         source,
-        reporter: reporter.trim() || null,
+        reporter: reporter.trim(),
         active: true,
       };
     });
@@ -370,12 +377,13 @@ export function StoreExceptionsCard({
                   />
                 </label>
                 <label className="text-[12px] font-semibold text-text-secondary">
-                  Reporter (optional)
+                  Reporter <span className="text-danger">*</span>
                   <input
                     type="text"
                     value={reporter}
                     onChange={(e) => setReporter(e.target.value)}
                     placeholder="Who told us? e.g. 'Store mgr Maria'"
+                    required
                     className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-yellow-50"
                   />
                 </label>
@@ -421,12 +429,13 @@ export function StoreExceptionsCard({
               <table className="w-full text-[12px] tabular">
                 <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold w-[110px]">Date</th>
                     <th className="text-left px-3 py-2 font-semibold w-[100px]">Job&nbsp;site&nbsp;ID</th>
                     <th className="text-left px-3 py-2 font-semibold">Job&nbsp;site&nbsp;name</th>
                     <th className="text-left px-3 py-2 font-semibold w-[180px]">Reason</th>
                     <th className="text-left px-3 py-2 font-semibold w-[180px]">Reporter</th>
                     <th className="text-left px-3 py-2 font-semibold w-[100px]">Source</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[70px]">Date</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[90px]">Time</th>
                     <th className="px-3 py-2 w-[120px]"></th>
                   </tr>
                 </thead>
@@ -436,7 +445,6 @@ export function StoreExceptionsCard({
                     if (isEditing) {
                       return (
                         <tr key={r.id} className="bg-yellow-50">
-                          <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtCapturedAt(r.created_at)}</td>
                           <td className="px-3 py-1.5">
                             <input
                               type="text"
@@ -488,6 +496,8 @@ export function StoreExceptionsCard({
                               <option value="manual">Manual</option>
                             </select>
                           </td>
+                          <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtDate(r.created_at)}</td>
+                          <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtTime(r.created_at)}</td>
                           <td className="px-3 py-1.5 text-right whitespace-nowrap">
                             <button
                               onClick={() => saveEdit(r)}
@@ -507,12 +517,13 @@ export function StoreExceptionsCard({
                     }
                     return (
                       <tr key={r.id}>
-                        <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtCapturedAt(r.created_at)}</td>
                         <td className="px-3 py-1.5 font-semibold text-text-primary">{r.site_id}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-primary">{r.note ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
                         <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
+                        <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtDate(r.created_at)}</td>
+                        <td className="px-3 py-1.5 text-text-secondary tabular whitespace-nowrap">{fmtTime(r.created_at)}</td>
                         <td className="px-3 py-1.5 text-right whitespace-nowrap">
                           <button
                             onClick={() => beginEdit(r)}
