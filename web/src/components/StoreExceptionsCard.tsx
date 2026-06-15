@@ -20,13 +20,13 @@ type StoreException = {
   job_site_name?: string | null;
 };
 
-const EXCEPTION_TYPES: { value: string; label: string }[] = [
-  { value: "closed",            label: "Closed" },
-  { value: "reduced_staffing",  label: "Reduced staffing" },
-  { value: "do_not_text",       label: "Do not text" },
-  { value: "holiday",           label: "Holiday" },
-  { value: "other",             label: "Other" },
-];
+type EditDraft = {
+  site_id: string;
+  exception_date: string;
+  note: string;
+  source: string;
+  reporter: string;
+};
 
 type BulkExceptionRow = { store: string; reason: string; other: string };
 const blankBulkRow = (): BulkExceptionRow => ({ store: "", reason: "No reason provided", other: "" });
@@ -55,17 +55,23 @@ export function StoreExceptionsCard({
   const [bulkRows, setBulkRows] = useState<BulkExceptionRow[]>(() =>
     Array.from({ length: 15 }, blankBulkRow),
   );
+  const [effectiveDate, setEffectiveDate] = useState(today);
   const [source, setSource] = useState("phone");
   const [reporter, setReporter] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
 
+  // Show today + upcoming so the operator can edit planned exceptions, not
+  // just the ones for today.
   const load = async () => {
     const { data } = await supabase
       .from("store_exception")
       .select("*")
-      .eq("exception_date", today)
+      .gte("exception_date", today)
       .eq("active", true)
+      .order("exception_date", { ascending: true })
       .order("created_at", { ascending: false });
     const exceptions = (data ?? []) as StoreException[];
     // Bulk-fetch site names for the listed site IDs and decorate the rows.
@@ -87,6 +93,7 @@ export function StoreExceptionsCard({
 
   const reset = () => {
     setBulkRows(Array.from({ length: 15 }, blankBulkRow));
+    setEffectiveDate(today);
     setSource("phone");
     setReporter("");
     setError(null);
@@ -132,7 +139,7 @@ export function StoreExceptionsCard({
         : r.reason;
       return {
         site_id: r.store.trim().toUpperCase(),
-        exception_date: today,
+        exception_date: effectiveDate,
         exception_type: "other",
         note: reasonLabel,
         source,
@@ -162,9 +169,34 @@ export function StoreExceptionsCard({
     onChange();
   };
 
-  const updateSavedReason = async (row: StoreException, reason: string) => {
-    setRows((rs) => rs.map((r) => (r.id === row.id ? { ...r, note: reason } : r)));
-    await supabase.from("store_exception").update({ note: reason }).eq("id", row.id);
+  const beginEdit = (row: StoreException) => {
+    setEditingId(row.id);
+    setEditDraft({
+      site_id: row.site_id,
+      exception_date: row.exception_date,
+      note: row.note ?? "",
+      source: row.source,
+      reporter: row.reporter ?? "",
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditDraft(null);
+  };
+
+  const saveEdit = async (row: StoreException) => {
+    if (!editDraft) return;
+    const patch = {
+      site_id: editDraft.site_id.trim().toUpperCase(),
+      exception_date: editDraft.exception_date,
+      note: editDraft.note.trim() || null,
+      source: editDraft.source,
+      reporter: editDraft.reporter.trim() || null,
+    };
+    await supabase.from("store_exception").update(patch).eq("id", row.id);
+    cancelEdit();
+    await load();
     onChange();
   };
 
@@ -299,7 +331,17 @@ export function StoreExceptionsCard({
                 </table>
               </div>
 
-              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 pt-2">
+              <div className="grid gap-x-6 gap-y-2 sm:grid-cols-3 pt-2">
+                <label className="text-[12px] font-semibold text-text-secondary">
+                  Effective date
+                  <input
+                    type="date"
+                    value={effectiveDate}
+                    min={today}
+                    onChange={(e) => setEffectiveDate(e.target.value)}
+                    className="mt-1 w-full border border-border rounded px-3 py-1.5 text-[13px] bg-surface"
+                  />
+                </label>
                 <label className="text-[12px] font-semibold text-text-secondary">
                   Reporter (optional)
                   <input
@@ -351,61 +393,120 @@ export function StoreExceptionsCard({
               <table className="w-full text-[12px] tabular">
                 <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
-                    <th className="text-left px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[140px]">Type</th>
-                    <th className="text-left px-3 py-2 font-semibold">Note</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[80px]">Source</th>
-                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Dept</th>
-                    <th className="px-3 py-2 w-[80px]"></th>
+                    <th className="text-left px-3 py-2 font-semibold w-[110px]">Date</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Job&nbsp;site&nbsp;ID</th>
+                    <th className="text-left px-3 py-2 font-semibold">Job&nbsp;site&nbsp;name</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Reason</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[100px]">Source</th>
+                    <th className="text-left px-3 py-2 font-semibold w-[180px]">Reporter</th>
+                    <th className="px-3 py-2 w-[120px]"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/60">
-                  {rows.map((r) => (
-                    <tr key={r.id}>
-                      <td className="px-3 py-1.5 font-semibold text-text-primary">{r.site_id}</td>
-                      <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
-                      <td className="px-3 py-1.5">
-                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-warning/15 text-warning">
-                          {EXCEPTION_TYPES.find((t) => t.value === r.exception_type)?.label ?? r.exception_type}
-                        </span>
-                      </td>
-                      <td className="px-3 py-1.5">
-                        {EXCEPTION_REASONS.includes(r.note ?? "") ? (
-                          <select
-                            value={r.note ?? ""}
-                            onChange={(e) => updateSavedReason(r, e.target.value)}
-                            className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface"
+                  {rows.map((r) => {
+                    const isEditing = editingId === r.id && editDraft;
+                    if (isEditing) {
+                      return (
+                        <tr key={r.id} className="bg-yellow-50">
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="date"
+                              value={editDraft.exception_date}
+                              onChange={(e) => setEditDraft({ ...editDraft, exception_date: e.target.value })}
+                              className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="text"
+                              value={editDraft.site_id}
+                              onChange={(e) => setEditDraft({ ...editDraft, site_id: e.target.value })}
+                              className="border border-border rounded px-2 py-0.5 text-[12px] tabular font-semibold uppercase bg-surface w-full"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
+                          <td className="px-3 py-1.5">
+                            {EXCEPTION_REASONS.includes(editDraft.note) ? (
+                              <select
+                                value={editDraft.note}
+                                onChange={(e) => setEditDraft({ ...editDraft, note: e.target.value })}
+                                className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                              >
+                                {EXCEPTION_REASONS.map((t) => (
+                                  <option key={t} value={t}>{t}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                value={editDraft.note}
+                                onChange={(e) => setEditDraft({ ...editDraft, note: e.target.value })}
+                                className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                              />
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <select
+                              value={editDraft.source}
+                              onChange={(e) => setEditDraft({ ...editDraft, source: e.target.value })}
+                              className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                            >
+                              <option value="phone">Phone</option>
+                              <option value="email">Email</option>
+                              <option value="sms">SMS</option>
+                              <option value="manual">Manual</option>
+                            </select>
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <input
+                              type="text"
+                              value={editDraft.reporter}
+                              onChange={(e) => setEditDraft({ ...editDraft, reporter: e.target.value })}
+                              className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
+                            />
+                          </td>
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            <button
+                              onClick={() => saveEdit(r)}
+                              className="text-[11px] font-semibold text-blue-1 hover:underline mr-2"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="text-[11px] text-text-secondary hover:underline"
+                            >
+                              Cancel
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={r.id}>
+                        <td className="px-3 py-1.5 text-text-secondary">{r.exception_date}</td>
+                        <td className="px-3 py-1.5 font-semibold text-text-primary">{r.site_id}</td>
+                        <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name ?? "—"}</td>
+                        <td className="px-3 py-1.5 text-text-primary">{r.note ?? "—"}</td>
+                        <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
+                        <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
+                        <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => beginEdit(r)}
+                            className="text-[11px] font-semibold text-blue-1 hover:underline mr-2"
                           >
-                            {EXCEPTION_REASONS.map((t) => (
-                              <option key={t} value={t}>{t}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            type="text"
-                            defaultValue={r.note ?? ""}
-                            onBlur={(e) => {
-                              if (e.target.value !== (r.note ?? "")) {
-                                updateSavedReason(r, e.target.value);
-                              }
-                            }}
-                            className="border border-border rounded px-2 py-0.5 text-[12px] bg-surface w-full"
-                          />
-                        )}
-                      </td>
-                      <td className="px-3 py-1.5 text-text-muted uppercase text-[10px]">{r.source}</td>
-                      <td className="px-3 py-1.5 text-text-secondary">{r.reporter ?? "—"}</td>
-                      <td className="px-3 py-1.5 text-right">
-                        <button
-                          onClick={() => remove(r)}
-                          className="text-[11px] text-danger hover:underline"
-                        >
-                          Remove
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => remove(r)}
+                            className="text-[11px] text-danger hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
