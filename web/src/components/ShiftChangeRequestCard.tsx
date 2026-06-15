@@ -232,12 +232,15 @@ export function ShiftChangeRequestCard({
   useEffect(() => {
     load();
     loadRecipients();
-    // Cache the full site list once so the Store # input can show a
-    // native typeahead dropdown of every job site.
+    // Cache the customer-facing site list once so the Store # input can show a
+    // native typeahead dropdown. Filter out internal Prestige admin entries
+    // (ChPrestige, CorpILCE, CNHTrainCt, etc.) which have chain = NULL — they
+    // aren't real job sites that take shift changes.
     (async () => {
       const { data } = await supabase
         .from("site")
         .select("site_id, site_name")
+        .not("chain", "is", null)
         .order("site_id");
       setAllSites((data ?? []) as { site_id: string; site_name: string | null }[]);
     })();
