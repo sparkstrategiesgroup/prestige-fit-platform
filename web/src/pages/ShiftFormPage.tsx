@@ -5,19 +5,23 @@
  * banner.
  */
 import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
+import { FormsSubNav } from "../components/FormsSubNav";
 
 export default function ShiftFormPage() {
   return (
-    <main className="max-w-page mx-auto px-5 py-6 space-y-4">
-      <div>
-        <h1 className="text-[20px] font-bold text-text-primary">Shift Form</h1>
-        <p className="text-[13px] text-text-secondary mt-1">
-          Submit a new shift or a shift-time change for your store. Changes
-          apply to today's schedule immediately and are flagged on the Labor
-          Control Tracking dashboard.
-        </p>
-      </div>
-      <ShiftChangeRequestCard standalone />
-    </main>
+    <>
+      <FormsSubNav />
+      <main className="max-w-page mx-auto px-5 py-6 space-y-4">
+        <div>
+          <h1 className="text-[20px] font-bold text-text-primary">Shift Form</h1>
+          <p className="text-[13px] text-text-secondary mt-1">
+            Submit a new shift or a shift-time change for your store. Changes
+            apply to today's schedule immediately and are flagged on the Labor
+            Control dashboard.
+          </p>
+        </div>
+        <ShiftChangeRequestCard standalone />
+      </main>
+    </>
   );
 }

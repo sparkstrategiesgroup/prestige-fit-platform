@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { HeaderBar } from "../components/HeaderBar";
 import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
 import { EpayReportChecklist } from "../components/EpayReportChecklist";
+import { DataFreshnessPanel } from "../components/DataFreshnessPanel";
 import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
 import { StoreExceptionsCard } from "../components/StoreExceptionsCard";
 import { supabase } from "../lib/supabase";
@@ -254,7 +254,6 @@ export default function DailyControl() {
   // The "next action" block + its eligible count, computed reactively as
   // ctNow ticks. Drives the hero card at the top of the page.
   const [, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
-  const [showOps, setShowOps] = useState(false);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -622,103 +621,35 @@ export default function DailyControl() {
   const employeesOnClock = new Set(lct.filter((r) => !r.time_out).map((r) => r.payroll_number)).size;
   const closedToday = lct.filter((r) => r.time_out).length;
 
-  // Export today's punches as a CSV with the EXACT Epay Punches Report column
-  // shape so the file is a drop-in replacement for the original export.
-  // Headers must match 1:1 — used downstream by anything that consumes the
-  // Epay format.
-  function exportReport() {
-    // MM/DD/YYYY
-    const fmtDate = (d: string | null) => {
-      if (!d) return "";
-      const [y, m, day] = d.split("-");
-      return `${m}/${day}/${y}`;
-    };
-    // MM/DD/YYYY HH:MM (matches Epay's "05/22/2026 14:55" format)
-    const fmtEpayDateTime = (iso: string | null) => {
-      if (!iso) return "";
-      const dt = new Date(iso);
-      const mm = String(dt.getMonth() + 1).padStart(2, "0");
-      const dd = String(dt.getDate()).padStart(2, "0");
-      const yyyy = dt.getFullYear();
-      const hh = String(dt.getHours()).padStart(2, "0");
-      const mi = String(dt.getMinutes()).padStart(2, "0");
-      return `${mm}/${dd}/${yyyy} ${hh}:${mi}`;
-    };
-    // HH:MM (e.g. "5.03" hours -> "05:02")
-    const fmtHours = (h: number | null) => {
-      if (h == null) return "";
-      const total = Math.round(h * 60);
-      const hh = Math.floor(total / 60);
-      const mm = total % 60;
-      return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
-    };
+  // Export today's punches → moved to the Reports tab per the new UX layout.
 
-    const headers = [
-      "Job/Site ID", "Job/Site Name", "Date", "Payroll No", "Employee Name",
-      "Rate Type", "Time In", "Time Out", "Actual Hours",
-    ];
-    const rows = lct.map((r) => {
-      const siteCode = Array.isArray(r.site) ? r.site[0]?.site_id : r.site?.site_id;
-      return [
-      siteCode ?? "",
-      r.job_site_name,
-      fmtDate(r.work_date),
-      r.payroll_number,
-      r.employee_name,
-      r.rate_type ?? "",
-      fmtEpayDateTime(r.time_in),
-      fmtEpayDateTime(r.time_out),
-      fmtHours(r.actual_hours),
-    ];
-    });
-    const csv = [headers, ...rows]
-      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `PunchesReport_${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Page header (HeaderBar) was removed per UX direction — Labor Control is
+  // a command center, not a document, so the title lives in the top nav. The
+  // at-a-glance counts that used to be the HeaderBar subtitle now ride as an
+  // inline caption next to the DateClockBar; the Export Report button moves
+  // to the Reports tab where document actions belong.
+  const summaryCaption = latestImport
+    ? `${latestImport.row_count ?? 0} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+    : lct.length > 0
+      ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+      : "Track punches and outreach in real time";
 
   return (
     <>
-      <HeaderBar
-        title="Labor Control Tracking"
-        subtitle={latestImport
-          ? `${latestImport.row_count ?? 0} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
-          : lct.length > 0
-            ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
-            : "Track punches and outreach in real time"}
-        right={
-          <div className="flex items-center gap-2">
+      <main className="max-w-page mx-auto px-5 py-5 space-y-5">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <DateClockBar ctNow={ctNow} />
+          <div className="text-[13px] text-text-secondary tabular flex items-center gap-3">
+            <span>{summaryCaption}</span>
             {lastRun && (
-              <span className="tabular mr-2 hidden sm:inline">
-                last run · {fmtTime(lastRun)}
+              <span className="text-text-muted hidden sm:inline">
+                · last run {fmtTime(lastRun)}
               </span>
             )}
-            <a
-              href="/reports"
-              className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors"
-            >
-              Reports →
-            </a>
-            <button
-              onClick={exportReport}
-              disabled={lct.length === 0}
-              className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
-            >
-              Export Report
-            </button>
           </div>
-        }
-      />
-
-      <main className="max-w-page mx-auto px-5 py-5 space-y-5">
-        <DateClockBar ctNow={ctNow} />
+        </div>
         <EpayReportChecklist refreshKey={lct.length} />
+        <DataFreshnessPanel />
         <ShiftChangeBanner refreshKey={lct.length} />
 
         {/* ============================================================== */}
@@ -773,21 +704,12 @@ export default function DailyControl() {
         })()}
 
         {/* ============================================================== */}
-        {/* OPERATIONS DETAILS — collapsed by default.                     */}
+        {/* OPERATIONS DETAILS — front and center, no collapse.            */}
         {/* ============================================================== */}
-        <details
-          className="bg-surface border border-border rounded-xl"
-          open={showOps}
-          onToggle={(e) => setShowOps((e.target as HTMLDetailsElement).open)}
-        >
-          <summary className="cursor-pointer p-5 flex items-center justify-between">
-            <span className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-              Operations details
-            </span>
-            <span className="text-[12px] text-text-muted">
-              {showOps ? "Hide ▴" : "Show ▾"}
-            </span>
-          </summary>
+        <section className="bg-surface border border-border rounded-xl">
+          <div className="px-5 pt-5 pb-2 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+            Operations details
+          </div>
           <div className="px-5 pb-5 space-y-5">
             <TimezoneClocks />
 
@@ -873,7 +795,7 @@ export default function DailyControl() {
           );
         })()}
           </div>
-        </details>
+        </section>
 
         {/* Upload Punches Report moved to the Reports tab. */}
 
@@ -1012,11 +934,10 @@ export default function DailyControl() {
         </section>
 
         {/* Today's punches — collapsed by default; driven by the upload above */}
-        <details id="todays-punches" className="bg-surface border border-border rounded-xl" open={false}>
-          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
-            <span>Row detail ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})</span>
-            <span className="text-blue-1 text-[11px]">click to expand</span>
-          </summary>
+        <section id="todays-punches" className="bg-surface border border-border rounded-xl">
+          <div className="p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+            Row detail ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})
+          </div>
           <section className="px-5 pb-5">
           {(() => {
             const filtered = chainFilter
@@ -1094,16 +1015,15 @@ export default function DailyControl() {
             );
           })()}
           </section>
-        </details>
+        </section>
         </div>
         {/* End TODAY'S PUNCHES section */}
 
-        {/* Notifications — collapsed by default to keep the page tight */}
-        <details className="bg-surface border border-border rounded-xl">
-          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
+        {/* Notifications — always visible per the front-and-center layout. */}
+        <section className="bg-surface border border-border rounded-xl">
+          <div className="p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-center justify-between">
             <span>Responses ({counts.total})</span>
-            <span className="text-blue-1 text-[11px]">click to expand</span>
-          </summary>
+          </div>
           <section className="px-5 pb-5">
           {notifs.length === 0 ? (
             <p className="text-text-muted text-sm py-4">
@@ -1152,7 +1072,7 @@ export default function DailyControl() {
             </div>
           )}
           </section>
-        </details>
+        </section>
       </main>
 
       {/* Confirmation modal */}
