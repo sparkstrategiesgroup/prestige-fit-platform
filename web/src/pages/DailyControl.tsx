@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { HeaderBar } from "../components/HeaderBar";
+import { useEffect, useState } from "react";
 import { KpiCard } from "../components/KpiCard";
 import { TimezoneClocks } from "../components/TimezoneClocks";
+import { EpayReportChecklist } from "../components/EpayReportChecklist";
+import { DataFreshnessPanel } from "../components/DataFreshnessPanel";
+import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
+import { StoreExceptionsCard } from "../components/StoreExceptionsCard";
 import { supabase } from "../lib/supabase";
 
 type ShiftBlock = {
@@ -9,6 +12,7 @@ type ShiftBlock = {
   label: string;
   end_time_local: string;
   clients: string[];
+  days_of_week: boolean[] | null;
 };
 type Notification = {
   id: number;
@@ -24,10 +28,14 @@ type LCT = {
   payroll_number: string;
   employee_name: string;
   job_site_name: string;
+  job_site_id: number;
   rate_type: string | null;
   time_in: string | null;
   time_out: string | null;
   shift_block_id: number | null;
+  work_date: string | null;
+  actual_hours: number | null;
+  site?: { site_id: string } | { site_id: string }[] | null;
 };
 type Recipient = {
   payroll_number: string;
@@ -42,8 +50,11 @@ type Candidate = {
   payroll_number: string;
   employee_name: string;
   cell_phone: string | null;
+  site_id: string | null;
   job_site_name: string;
   rate_type: string | null;
+  time_in: string | null;
+  time_out: string | null;
   status: "ELIGIBLE" | "EXCLUDED";
   reason: string | null;
 };
@@ -52,13 +63,27 @@ const FUNCTIONS_URL = `${
   import.meta.env.VITE_SUPABASE_URL ?? "https://sshhcpzleurztzksrlvr.supabase.co"
 }/functions/v1`;
 
+// All timestamps render in client (Central) time so a viewer in any browser
+// timezone sees the same ops clock as Claudia in Texas. Suffix "CT" makes the
+// reference frame explicit.
 function fmtTime(iso: string | null) {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "short",
-    timeStyle: "short",
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit", hour12: true,
+  }) + " CT";
+}
+
+// Same as fmtTime but drops the date — for tables where every row is "today".
+function fmtTimeOnly(iso: string | null) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    hour: "numeric", minute: "2-digit", hour12: true,
   });
 }
+
 
 // Current minute-of-day in Central Time. Most shift_blocks are anchored to
 // America/Chicago; this drives the "due now" highlight on the checkpoint grid.
@@ -92,6 +117,128 @@ function statusFor(block: ShiftBlock, ctNow: number): { status: BlockStatus; min
   return { status: "future", minsAway };
 }
 
+const TZ_STRIP = [
+  { label: "EASTERN",  iana: "America/New_York" },
+  { label: "CENTRAL",  iana: "America/Chicago" },
+  { label: "MOUNTAIN", iana: "America/Denver" },
+  { label: "PACIFIC",  iana: "America/Los_Angeles" },
+];
+
+/**
+ * Surfaces "a shift change was applied today" so the operator knows the
+ * Master Schedule was modified — without expanding the Shift Change card.
+ * Each manual SHIFT FORM submission auto-applies a new schedule_slot tagged
+ * to a fresh master_schedule_revision, which fn_candidates_for_shift_block
+ * then picks up immediately.
+ */
+function ShiftChangeBanner({ refreshKey: _refreshKey }: { refreshKey: number }) {
+  const [count, setCount] = useState(0);
+  const [latest, setLatest] = useState<string | null>(null);
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    supabase
+      .from("master_schedule_revision")
+      .select("id, applied_at, source_filename")
+      .eq("status", "applied")
+      .gte("applied_at", today + "T00:00:00")
+      .ilike("source_filename", "%manual%")
+      .order("applied_at", { ascending: false })
+      .limit(20)
+      .then(({ data }) => {
+        const rows = data ?? [];
+        setCount(rows.length);
+        if (rows[0]?.applied_at) {
+          setLatest(
+            new Date(rows[0].applied_at).toLocaleTimeString("en-US", {
+              timeZone: "America/Chicago",
+              hour: "numeric", minute: "2-digit", hour12: true,
+            }) + " CT",
+          );
+        }
+      });
+  }, [_refreshKey]);
+
+  if (count === 0) return null;
+  return (
+    <section className="bg-warning/10 border border-warning rounded-xl p-3 flex items-center justify-between flex-wrap gap-2">
+      <div className="text-[13px] text-warning font-semibold">
+        <span className="uppercase tracking-[0.06em] text-[11px] mr-2">Shift change</span>
+        {count} {count === 1 ? "change" : "changes"} applied to today's schedule
+        {latest && <span className="ml-2 font-normal text-text-secondary">· last at {latest}</span>}
+      </div>
+      <a href="#shift-changes" className="text-[12px] font-semibold underline">
+        Review →
+      </a>
+    </section>
+  );
+}
+
+function DateClockBar({ ctNow: _ctNow }: { ctNow: number }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const dateLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "long", month: "long", day: "numeric",
+  }).format(now).toUpperCase();
+  // 12-hour clock for each zone — "5:07:20 PM" instead of "17:07:20"
+  const fmt = (iana: string) => new Intl.DateTimeFormat("en-US", {
+    timeZone: iana, hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+  }).format(now);
+  // Match the viewer's local wall-clock minute to each zone's wall-clock minute.
+  // Whichever matches (i.e. same UTC offset right now) gets highlighted as
+  // "your" zone. We compare to-the-minute so two zones at the same offset
+  // (e.g. Phoenix vs Denver in winter) still resolve correctly because the
+  // viewer's tz is what matters, not the IANA name.
+  const localHM = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(now);
+  const matchTz = (iana: string) => new Intl.DateTimeFormat("en-US", {
+    timeZone: iana, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(now);
+  return (
+    <section
+      aria-label="Current operating date and time across regions"
+      className="sticky top-0 z-20 bg-surface border border-border rounded-xl px-5 py-3 flex items-center justify-between gap-6 flex-wrap shadow-sm"
+    >
+      <div className="flex flex-col">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">
+          Today · Central
+        </span>
+        <span className="text-[20px] font-bold text-text-primary leading-tight">
+          {dateLabel}
+        </span>
+      </div>
+      <div className="flex items-center gap-5 flex-wrap">
+        {TZ_STRIP.map((z) => {
+          const isLocal = matchTz(z.iana) === localHM;
+          return (
+            <div
+              key={z.iana}
+              className={`flex flex-col items-end px-2 py-1 rounded ${
+                isLocal ? "bg-warning/15 border border-warning/40" : ""
+              }`}
+            >
+              <span className={`text-[10px] font-semibold uppercase tracking-[0.06em] ${
+                isLocal ? "text-warning" : "text-text-muted"
+              }`}>
+                {z.label}{isLocal ? " · YOU" : ""}
+              </span>
+              <span className={`text-[16px] font-bold tabular leading-none mt-0.5 ${
+                isLocal ? "text-warning" : "text-text-primary"
+              }`}>
+                {fmt(z.iana)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function DailyControl() {
   const [blocks, setBlocks] = useState<ShiftBlock[]>([]);
   const [notifs, setNotifs] = useState<Notification[]>([]);
@@ -99,10 +246,14 @@ export default function DailyControl() {
   const [running, setRunning] = useState<number | null>(null);
   const [counts, setCounts] = useState({ total: 0, today: 0 });
   const [lastRun, setLastRun] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState<string>("");
+  const [latestImport, setLatestImport] = useState<{
+    id: number; filename: string; row_count: number | null; completed_at: string;
+  } | null>(null);
   const [ctNow, setCtNow] = useState(() => ctMinutesNow(new Date()));
   const [chainFilter, setChainFilter] = useState<string | null>(null);
+  // The "next action" block + its eligible count, computed reactively as
+  // ctNow ticks. Drives the hero card at the top of the page.
+  const [, setNextEligible] = useState<{ blockId: number; count: number } | null>(null);
   const [confirm, setConfirm] = useState<{
     block: ShiftBlock;
     recipients: Recipient[];
@@ -111,9 +262,25 @@ export default function DailyControl() {
     warnEs: string;
     clockedEn: string;
     clockedEs: string;
-    kind: "warning" | "clocked_out";
+    kinds: Array<"warning" | "clocked_out">;
+    step: 1 | 2;
   } | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [sentReceipt, setSentReceipt] = useState<{
+    blockId: number;
+    blockLabel: string;
+    sentAfter: string;
+    kinds: Array<"warning" | "clocked_out">;
+    messages: Array<{
+      id: number;
+      recipient_address: string;
+      language: string;
+      notification_type: string;
+      message_body: string;
+      sent_at: string;
+    }>;
+    emailStatus: "pending" | "sent" | "failed" | "skipped";
+    emailDetail?: string;
+  } | null>(null);
 
   async function refresh() {
     const today = new Date();
@@ -135,24 +302,42 @@ export default function DailyControl() {
         supabase
           .from("labor_control_tracking")
           .select(
-            "payroll_number,employee_name,job_site_name,rate_type,time_in,time_out,shift_block_id",
+            "payroll_number,employee_name,job_site_name,job_site_id,rate_type,time_in,time_out,shift_block_id,work_date,actual_hours,site:site!labor_control_tracking_job_site_id_fkey(site_id)",
           )
           .eq("work_date", new Date().toISOString().slice(0, 10))
           .order("time_in")
-          .limit(100),
+          .limit(1000),
       ]);
     setNotifs((n ?? []) as Notification[]);
     setLct((l ?? []) as LCT[]);
     setCounts({ total: total ?? 0, today: today_ct ?? 0 });
     setLastRun(n && n.length ? n[0].sent_at : null);
+
+    // The "punches loaded" badge reflects the LAST ePay file the operator
+    // received — not the cumulative LCT total — so it matches what Claudia
+    // sees in the source workbook.
+    const { data: imp } = await supabase
+      .from("epay_imports")
+      .select("id, filename, row_count, completed_at")
+      .in("status", ["succeeded", "partial"])
+      .gte("started_at", new Date().toISOString().slice(0, 10))
+      .order("completed_at", { ascending: false })
+      .limit(1);
+    setLatestImport(imp && imp.length ? imp[0] : null);
   }
 
   useEffect(() => {
     supabase
       .from("shift_blocks")
-      .select("id,label,end_time_local,clients")
+      .select("id,label,end_time_local,clients,days_of_week")
+      .eq("active", true)
       .order("end_time_local")
-      .then(({ data }) => setBlocks((data ?? []) as ShiftBlock[]));
+      .then(({ data }) => {
+        const dow = new Date().getDay();
+        setBlocks(((data ?? []) as ShiftBlock[]).filter(
+          (b) => !b.days_of_week || b.days_of_week[dow],
+        ));
+      });
     refresh();
   }, []);
 
@@ -162,6 +347,38 @@ export default function DailyControl() {
     const id = window.setInterval(() => setCtNow(ctMinutesNow(new Date())), 30000);
     return () => window.clearInterval(id);
   }, []);
+
+  // Determine the "next action" block — DUE NOW if any, else the closest
+  // upcoming block. Re-fetch its eligible count whenever it changes (or every
+  // 30s with ctNow tick).
+  const nextBlock = (() => {
+    if (blocks.length === 0) return null;
+    const due = blocks.find((b) => statusFor(b, ctNow).status === "due");
+    if (due) return due;
+    const upcoming = blocks
+      .map((b) => ({ b, s: statusFor(b, ctNow) }))
+      .filter((x) => x.s.status === "upcoming" || x.s.status === "future")
+      .sort((a, c) => a.s.minsAway - c.s.minsAway)[0];
+    return upcoming?.b ?? null;
+  })();
+
+  useEffect(() => {
+    if (!nextBlock) {
+      setNextEligible(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.rpc("fn_candidates_for_shift_block", {
+        p_shift_block_id: nextBlock.id,
+        p_work_date: new Date().toISOString().slice(0, 10),
+      });
+      if (cancelled) return;
+      const count = (data ?? []).filter((c: { status: string }) => c.status === "ELIGIBLE").length;
+      setNextEligible({ blockId: nextBlock.id, count });
+    })();
+    return () => { cancelled = true; };
+  }, [nextBlock?.id, ctNow, lct.length]);
 
   async function previewBlock(block: ShiftBlock) {
     // Fetch eligible recipients + candidate breakdown + BOTH templates so
@@ -184,7 +401,7 @@ export default function DailyControl() {
           .eq("active", true),
       ]);
     if (eligErr) {
-      setUploadStatus(`Eligibility query failed: ${eligErr.message}`);
+      console.error("Eligibility query failed:", eligErr.message);
       return;
     }
     const find = (type: string, lang: string) =>
@@ -206,70 +423,184 @@ export default function DailyControl() {
       warnEs: find("END_OF_SHIFT_WARNING", "es"),
       clockedEn: find("END_OF_SHIFT_CLOCKED_OUT", "en"),
       clockedEs: find("END_OF_SHIFT_CLOCKED_OUT", "es"),
-      kind: defaultKind,
+      kinds: [defaultKind],
+      step: 1,
     });
   }
 
   async function confirmSend() {
     if (!confirm) return;
-    setRunning(confirm.block.id);
+    const blockId = confirm.block.id;
+    const kinds = confirm.kinds;
+    const blockLabel = confirm.block.label;
+    const startedAt = new Date().toISOString();
+    setRunning(blockId);
     setConfirm(null);
     try {
-      const res = await fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shift_block_id: confirm.block.id, kind: confirm.kind }),
+      // Fire one runner call per selected kind. Both can be picked at once,
+      // in which case each recipient gets the warning AND the clocked-out
+      // notice.
+      await Promise.all(kinds.map((k) =>
+        fetch(`${FUNCTIONS_URL}/shift-block-runner`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shift_block_id: blockId, kind: k }),
+        }).then((r) => r.json())
+      ));
+      // Pull back the rows we just wrote so the operator can see exactly
+      // which texts went out, to whom, in which language.
+      const { data: sent } = await supabase
+        .from("notifications")
+        .select("id, recipient_address, language, notification_type, message_body, sent_at")
+        .eq("shift_block_id", blockId)
+        .gte("sent_at", startedAt)
+        .order("sent_at", { ascending: true });
+      setSentReceipt({
+        blockId,
+        blockLabel,
+        sentAfter: startedAt,
+        kinds,
+        messages: (sent ?? []) as NonNullable<typeof sentReceipt>["messages"],
+        emailStatus: "pending",
       });
-      await res.json();
+      // Fire-and-forget summary email to Claudia. Result feeds the receipt
+      // modal banner so the operator can see it land (or fail) without
+      // blocking the rest of the UI.
+      if (sent && sent.length > 0) {
+        fetch(`${FUNCTIONS_URL}/notify-summary-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shift_block_id: blockId,
+            sent_after: startedAt,
+            block_label: blockLabel,
+          }),
+        })
+          .then(async (r) => {
+            const body = await r.json().catch(() => ({}));
+            setSentReceipt((prev) =>
+              prev && prev.blockId === blockId && prev.sentAfter === startedAt
+                ? { ...prev, emailStatus: r.ok ? "sent" : "failed",
+                    emailDetail: r.ok ? body.sent_to?.join(", ") : body.error ?? String(r.status) }
+                : prev,
+            );
+          })
+          .catch((err) => {
+            setSentReceipt((prev) =>
+              prev && prev.blockId === blockId && prev.sentAfter === startedAt
+                ? { ...prev, emailStatus: "failed", emailDetail: String(err) }
+                : prev,
+            );
+          });
+      } else {
+        setSentReceipt((prev) => prev ? { ...prev, emailStatus: "skipped" } : prev);
+      }
     } finally {
       setRunning(null);
       refresh();
     }
   }
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setUploadStatus(`Uploading ${file.name}…`);
-    const fd = new FormData();
-    fd.append("file", file);
+  // Manual trigger for the Power Automate summary-email flow. Same payload
+  // the auto-fire after a checkpoint uses; updates the modal banner so the
+  // operator sees the result.
+  async function emailClaudia(receipt: NonNullable<typeof sentReceipt>) {
+    setSentReceipt((prev) => prev ? { ...prev, emailStatus: "pending", emailDetail: undefined } : prev);
     try {
-      const res = await fetch(`${FUNCTIONS_URL}/epay-import`, {
+      const r = await fetch(`${FUNCTIONS_URL}/notify-summary-email`, {
         method: "POST",
-        body: fd,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shift_block_id: receipt.blockId,
+          sent_after: receipt.sentAfter,
+          block_label: receipt.blockLabel,
+        }),
       });
-      const j = await res.json();
-      setUploadStatus(
-        res.ok
-          ? `Imported ${j.imported} row${j.imported === 1 ? "" : "s"}` +
-            (j.sites_created ? `, created ${j.sites_created} new site${j.sites_created === 1 ? "" : "s"}` : "") +
-            (j.errors?.length ? `, ${j.errors.length} error${j.errors.length === 1 ? "" : "s"}` : "")
-          : `Failed: ${j.error ?? "unknown"}`,
+      const body = await r.json().catch(() => ({}));
+      setSentReceipt((prev) =>
+        prev ? {
+          ...prev,
+          emailStatus: r.ok ? "sent" : "failed",
+          emailDetail: r.ok ? body.sent_to?.join(", ") : body.error ?? String(r.status),
+        } : prev,
       );
     } catch (err) {
-      setUploadStatus(`Failed: ${(err as Error).message}`);
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-      await refresh();
-      // Auto-scroll to the punches table so the operator sees the
-      // imported data immediately.
-      requestAnimationFrame(() => {
-        document.getElementById("todays-punches")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      });
+      setSentReceipt((prev) =>
+        prev ? { ...prev, emailStatus: "failed", emailDetail: String(err) } : prev,
+      );
     }
+  }
+
+  // Build the post-send CSV: actual time_in vs scheduled in/out + shift hours
+  // for every employee we just texted. Pulled from fn_sent_summary_for_run.
+  async function downloadSentSummary(receipt: NonNullable<typeof sentReceipt>) {
+    const { data, error } = await supabase.rpc("fn_sent_summary_for_run", {
+      p_shift_block_id: receipt.blockId,
+      p_sent_after: receipt.sentAfter,
+    });
+    if (error || !data) {
+      alert(`Could not build CSV: ${error?.message ?? "no rows"}`);
+      return;
+    }
+    type Row = {
+      site_id: string; job_site_name: string;
+      payroll_number: string; employee_name: string;
+      recipient_phone: string; language: string;
+      notification_type: string; sent_at: string;
+      time_in: string | null; scheduled_in: string | null;
+      scheduled_out: string | null; shift_hours: number | string | null;
+      message_body: string;
+    };
+    const rows = data as Row[];
+    const fmtCt = (iso: string | null) => iso
+      ? new Date(iso).toLocaleString("en-US", {
+          timeZone: "America/Chicago",
+          hour: "2-digit", minute: "2-digit", hour12: false,
+        })
+      : "";
+    const fmtSchedTime = (t: string | null) => t ? t.slice(0, 5) : "";
+    const header = [
+      "JOBSITE ID","JOBSITE NAME","PAYROLL ID","EMPLOYEE NAME",
+      "TIME IN (ACTUAL CT)","SCHEDULED IN CT","SCHEDULED OUT CT","SHIFT HOURS",
+      "RECIPIENT PHONE","LANGUAGE","TYPE","SENT AT CT",
+    ];
+    const escape = (v: unknown) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [
+      header.join(","),
+      ...rows.map((r) => [
+        r.site_id, r.job_site_name, r.payroll_number, r.employee_name,
+        fmtCt(r.time_in), fmtSchedTime(r.scheduled_in), fmtSchedTime(r.scheduled_out),
+        r.shift_hours ?? "",
+        r.recipient_phone, r.language,
+        r.notification_type === "END_OF_SHIFT_WARNING" ? "Warning"
+          : r.notification_type === "END_OF_SHIFT_CLOCKED_OUT" ? "End shift"
+          : r.notification_type,
+        fmtCt(r.sent_at),
+      ].map(escape).join(",")),
+    ].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+    a.download = `sent-${receipt.blockLabel.replace(/\s+/g, "")}-${stamp}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // Open-punch count per shift block, mapped via labor_control_tracking.
   // Used to size the badge on each checkpoint tile.
   const openByBlock: Record<number, number> = {};
+  const totalByBlock: Record<number, number> = {};
   for (const r of lct) {
-    if (!r.time_out && r.shift_block_id) {
-      openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+    if (r.shift_block_id) {
+      totalByBlock[r.shift_block_id] = (totalByBlock[r.shift_block_id] ?? 0) + 1;
+      if (!r.time_out) {
+        openByBlock[r.shift_block_id] = (openByBlock[r.shift_block_id] ?? 0) + 1;
+      }
     }
   }
   // Chain options for the filter row (only show chains that have a tile).
@@ -290,66 +621,100 @@ export default function DailyControl() {
   const employeesOnClock = new Set(lct.filter((r) => !r.time_out).map((r) => r.payroll_number)).size;
   const closedToday = lct.filter((r) => r.time_out).length;
 
-  function exportReport() {
-    const headers = ["Payroll #","Employee","Site","Rate","Time In","Time Out","Status"];
-    const rows = lct.map((r) => [
-      r.payroll_number, r.employee_name, r.job_site_name, r.rate_type ?? "",
-      fmtTime(r.time_in), r.time_out ? fmtTime(r.time_out) : "OPEN",
-      r.time_out ? "Closed" : "Open",
-    ]);
-    const csv = [headers, ...rows]
-      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
-      .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `labor-control-${new Date().toISOString().slice(0,10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+  // Export today's punches → moved to the Reports tab per the new UX layout.
+
+  // Page header (HeaderBar) was removed per UX direction — Labor Control is
+  // a command center, not a document, so the title lives in the top nav. The
+  // at-a-glance counts that used to be the HeaderBar subtitle now ride as an
+  // inline caption next to the DateClockBar; the Export Report button moves
+  // to the Reports tab where document actions belong.
+  const summaryCaption = latestImport
+    ? `${latestImport.row_count ?? 0} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+    : lct.length > 0
+      ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
+      : "Track punches and outreach in real time";
 
   return (
     <>
-      <HeaderBar
-        title="Labor Control Tracking"
-        subtitle={lct.length > 0
-          ? `${lct.length} punches loaded · ${lct.length - closedToday} active · ${closedToday} closed`
-          : "Track punches and outreach in real time"}
-        right={
-          <div className="flex items-center gap-2">
+      <main className="max-w-page mx-auto px-5 py-5 space-y-5">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <DateClockBar ctNow={ctNow} />
+          <div className="text-[13px] text-text-secondary tabular flex items-center gap-3">
+            <span>{summaryCaption}</span>
             {lastRun && (
-              <span className="tabular mr-2 hidden sm:inline">
-                last run · {fmtTime(lastRun)}
+              <span className="text-text-muted hidden sm:inline">
+                · last run {fmtTime(lastRun)}
               </span>
             )}
-            <label className="cursor-pointer text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg transition-colors">
-              {uploading ? "Uploading…" : lct.length > 0 ? "Re-upload" : "Upload"}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
-            <button
-              onClick={exportReport}
-              disabled={lct.length === 0}
-              className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2 disabled:opacity-50"
-            >
-              Export Report
-            </button>
           </div>
-        }
-      />
+        </div>
+        <EpayReportChecklist refreshKey={lct.length} />
+        <DataFreshnessPanel />
+        <ShiftChangeBanner refreshKey={lct.length} />
 
-      <main className="max-w-page mx-auto px-5 py-5 space-y-5">
-        <TimezoneClocks />
+        {/* ============================================================== */}
+        {/* HERO — the one thing the operator should do next.              */}
+        {/* ============================================================== */}
+        {nextBlock && (() => {
+          const status = statusFor(nextBlock, ctNow);
+          const recommend: "warning" | "clocked_out" =
+            status.status === "past" ? "clocked_out" : "warning";
+          const due = status.status === "due";
+          return (
+            <section
+              className={`rounded-xl shadow-sm border p-6 ${
+                due
+                  ? "bg-warning/10 border-warning"
+                  : "bg-surface border-border"
+              }`}
+            >
+              <div className="flex items-start justify-between flex-wrap gap-4">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                    {due ? "Due now" : "Next punch-out"}
+                  </div>
+                  <h2 className="text-[28px] font-bold text-warning leading-tight mt-1 tabular">
+                    {nextBlock.label.toUpperCase()}
+                  </h2>
+                  <div className="text-[14px] text-text-secondary mt-1 tabular">
+                    <strong className="text-text-primary">{latestImport?.row_count ?? lct.length}</strong> rows in latest file
+                    {" · "}
+                    <strong className="text-text-primary">{totalByBlock[nextBlock.id] ?? 0}</strong> punches in this shift
+                  </div>
+                </div>
+                <button
+                  onClick={() => previewBlock(nextBlock)}
+                  disabled={!!running}
+                  className="text-[15px] font-semibold px-6 py-3 rounded-lg transition-colors disabled:opacity-50 bg-warning text-white hover:opacity-90"
+                >
+                  Review and send →
+                </button>
+              </div>
+              {/* Secondary actions inline */}
+              <div className="flex items-center gap-4 mt-4 pt-4 border-t border-border/60 text-[12px] text-warning font-semibold">
+                <span>
+                  Recommended:{" "}
+                  <strong>
+                    {recommend === "warning" ? "15-minute reminder" : "END SHIFT"}
+                  </strong>
+                </span>
+              </div>
+            </section>
+          );
+        })()}
+
+        {/* ============================================================== */}
+        {/* OPERATIONS DETAILS — front and center, no collapse.            */}
+        {/* ============================================================== */}
+        <section className="bg-surface border border-border rounded-xl">
+          <div className="px-5 pt-5 pb-2 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+            Operations details
+          </div>
+          <div className="px-5 pb-5 space-y-5">
+            <TimezoneClocks />
 
         {/* Operational KPIs */}
-        <div className="grid gap-4 grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           <KpiCard
             label="SITES OPEN"
             value={sitesOpen}
@@ -367,11 +732,6 @@ export default function DailyControl() {
             value={lct.filter((r) => r.rate_type === "Lunch" || r.rate_type === "LUNCH").length}
             changeText="0 high severity"
             changeDirection="up"
-          />
-          <KpiCard
-            label="PAM RESOLUTION"
-            value={closedToday + "/" + lct.length}
-            changeText={lct.length > 0 ? `${Math.round((closedToday/lct.length)*100)}% resolved` : undefined}
           />
           <KpiCard
             label="EXCESS HOURS RISK"
@@ -434,43 +794,27 @@ export default function DailyControl() {
             </div>
           );
         })()}
-
-        {/* Upload Punches Report */}
-        <section className="bg-surface border border-border rounded-xl p-5">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                Upload Punches Report
-              </h2>
-              <p className="text-[13px] text-text-secondary mt-1">
-                Drop the .xlsx export from Epay. We'll parse it, auto-create any
-                new sites, and refresh the dashboard.
-              </p>
-            </div>
-            <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
-              {uploading ? "Uploading…" : "Choose .xlsx file"}
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx"
-                onChange={handleUpload}
-                disabled={uploading}
-                className="hidden"
-              />
-            </label>
           </div>
-          {uploadStatus && (
-            <div className="mt-3 text-[13px] text-text-secondary tabular flex items-center gap-3 flex-wrap">
-              <span>{uploadStatus}</span>
-              <a
-                href="#todays-punches"
-                className="text-blue-1 hover:underline font-semibold"
-              >
-                View imported punches ↓
-              </a>
-            </div>
-          )}
         </section>
+
+        {/* Upload Punches Report moved to the Reports tab. */}
+
+        <StoreExceptionsCard onChange={refresh} />
+
+        <ShiftChangeRequestCard />
+
+        {/* ============================================================== */}
+        {/* TODAY'S PUNCHES — consolidates the tile grid + detail table.   */}
+        {/* ============================================================== */}
+        <div className="space-y-5">
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[16px] font-bold uppercase tracking-[0.06em] text-text-primary">
+              Today's Punches
+            </h2>
+            <span className="text-[12px] text-text-secondary">
+              {lct.length} loaded · {blocks.length} {blocks.length === 1 ? "shift" : "shifts"}
+            </span>
+          </div>
 
         {/* Checkpoint grid with real-time highlight */}
         <section className="bg-surface border border-border rounded-xl p-5">
@@ -590,11 +934,10 @@ export default function DailyControl() {
         </section>
 
         {/* Today's punches — collapsed by default; driven by the upload above */}
-        <details id="todays-punches" className="bg-surface border border-border rounded-xl" open={false}>
-          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
-            <span>Today's punches ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})</span>
-            <span className="text-blue-1 text-[11px]">click to expand</span>
-          </summary>
+        <section id="todays-punches" className="bg-surface border border-border rounded-xl">
+          <div className="p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+            Row detail ({lct.length}{chainFilter ? ` · filtered ${chainFilter}` : ""})
+          </div>
           <section className="px-5 pb-5">
           {(() => {
             const filtered = chainFilter
@@ -628,37 +971,42 @@ export default function DailyControl() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-[13px]">
-                      <thead>
-                        <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                          <th className="py-2 pr-3 font-medium">Payroll #</th>
-                          <th className="py-2 pr-3 font-medium">Employee</th>
-                          <th className="py-2 pr-3 font-medium">Site</th>
-                          <th className="py-2 pr-3 font-medium">Rate</th>
-                          <th className="py-2 pr-3 font-medium">In</th>
-                          <th className="py-2 pr-3 font-medium">Out</th>
+                    <table className="w-full text-[12px] tabular">
+                      <thead className="bg-bg">
+                        <tr className="text-left text-[10px] uppercase tracking-[0.06em] text-text-muted">
+                          <th className="px-3 py-2 font-semibold w-[88px]">Payroll #</th>
+                          <th className="px-3 py-2 font-semibold w-[200px]">Employee</th>
+                          <th className="px-3 py-2 font-semibold w-[100px]">Jobsite&nbsp;ID</th>
+                          <th className="px-3 py-2 font-semibold">Jobsite&nbsp;Name</th>
+                          <th className="px-3 py-2 font-semibold w-[80px]">Rate</th>
+                          <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;In</th>
+                          <th className="px-3 py-2 font-semibold text-right w-[90px]">Time&nbsp;Out</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filtered.map((r) => (
+                        {filtered.map((r) => {
+                          const siteCode = Array.isArray(r.site) ? r.site[0]?.site_id : r.site?.site_id;
+                          return (
                           <tr
                             key={`${r.payroll_number}-${r.time_in}`}
                             className={!r.time_out ? "bg-warning/5" : ""}
                           >
-                            <td className="py-2 pr-3 tabular">{r.payroll_number}</td>
-                            <td className="py-2 pr-3">{r.employee_name}</td>
-                            <td className="py-2 pr-3">{r.job_site_name}</td>
-                            <td className="py-2 pr-3 text-text-muted">{r.rate_type ?? "—"}</td>
-                            <td className="py-2 pr-3 tabular">{fmtTime(r.time_in)}</td>
-                            <td className="py-2 pr-3 tabular">
+                            <td className="px-3 py-1.5 text-text-secondary font-medium">{r.payroll_number}</td>
+                            <td className="px-3 py-1.5">{r.employee_name}</td>
+                            <td className="px-3 py-1.5 text-text-primary font-semibold">{siteCode ?? "—"}</td>
+                            <td className="px-3 py-1.5 text-text-secondary">{r.job_site_name}</td>
+                            <td className="px-3 py-1.5 text-text-muted">{r.rate_type ?? "—"}</td>
+                            <td className="px-3 py-1.5 text-right text-text-secondary">{fmtTime(r.time_in)}</td>
+                            <td className="px-3 py-1.5 text-right">
                               {r.time_out ? (
-                                fmtTime(r.time_out)
+                                <span className="text-text-secondary">{fmtTime(r.time_out)}</span>
                               ) : (
                                 <span className="text-warning font-semibold">OPEN</span>
                               )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -667,14 +1015,15 @@ export default function DailyControl() {
             );
           })()}
           </section>
-        </details>
+        </section>
+        </div>
+        {/* End TODAY'S PUNCHES section */}
 
-        {/* Notifications — collapsed by default to keep the page tight */}
-        <details className="bg-surface border border-border rounded-xl">
-          <summary className="cursor-pointer p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted hover:text-text-primary list-none flex items-center justify-between">
+        {/* Notifications — always visible per the front-and-center layout. */}
+        <section className="bg-surface border border-border rounded-xl">
+          <div className="p-5 text-[13px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-center justify-between">
             <span>Responses ({counts.total})</span>
-            <span className="text-blue-1 text-[11px]">click to expand</span>
-          </summary>
+          </div>
           <section className="px-5 pb-5">
           {notifs.length === 0 ? (
             <p className="text-text-muted text-sm py-4">
@@ -723,7 +1072,7 @@ export default function DailyControl() {
             </div>
           )}
           </section>
-        </details>
+        </section>
       </main>
 
       {/* Confirmation modal */}
@@ -734,158 +1083,482 @@ export default function DailyControl() {
           role="dialog"
           aria-modal="true"
         >
-          <div className="bg-surface rounded-xl shadow-xl border border-border max-w-2xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-5 border-b border-border">
-              <h3 className="text-[16px] font-bold text-text-primary">
-                Send to {confirm.recipients.length}{" "}
-                {confirm.recipients.length === 1 ? "person" : "people"}?
-              </h3>
-              <p className="text-[13px] text-text-secondary mt-1">
-                <strong>{confirm.block.label}</strong> checkpoint · suppressed
-                rows excluded automatically.
-              </p>
-            </div>
-
-            {/* Which notification? */}
-            <div className="p-5 border-b border-border bg-bg/40 space-y-3">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
-                Which message?
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "warning" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "warning"
-                      ? "bg-warning/10 border-warning ring-2 ring-warning/30"
-                      : "bg-surface border-border hover:border-warning"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    15-minute reminder
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift will be ending soon"
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirm({ ...confirm, kind: "clocked_out" })}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    confirm.kind === "clocked_out"
-                      ? "bg-good/10 border-good ring-2 ring-good/30"
-                      : "bg-surface border-border hover:border-good"
-                  }`}
-                >
-                  <div className="text-[12px] font-semibold text-text-primary">
-                    Clocked-out notice
-                  </div>
-                  <div className="text-[11px] text-text-muted mt-0.5">
-                    "Your shift has ended — please stop"
-                  </div>
-                </button>
-              </div>
-
-              {(() => {
-                const en = confirm.kind === "warning" ? confirm.warnEn : confirm.clockedEn;
-                const es = confirm.kind === "warning" ? confirm.warnEs : confirm.clockedEs;
-                return (
-                  <>
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
-                      <span>Message preview</span>
-                      <span className="tabular text-text-secondary">
-                        {confirm.recipients.length * 2} messages · {(en.length + es.length)} characters
+          {(() => {
+            const hasWarning  = confirm.kinds.includes("warning");
+            const hasClocked  = confirm.kinds.includes("clocked_out");
+            const messagesPerPerson = confirm.kinds.length * 2;
+            const totalTexts = confirm.recipients.length * messagesPerPerson;
+            const toggleKind = (k: "warning" | "clocked_out") => {
+              const next = confirm.kinds.includes(k)
+                ? confirm.kinds.filter((x) => x !== k)
+                : [...confirm.kinds, k];
+              setConfirm({ ...confirm, kinds: next });
+            };
+            return (
+              <div className="bg-surface rounded-xl shadow-xl border border-border max-w-3xl w-full max-h-[90vh] flex flex-col">
+                <>
+                    {/* Step indicator */}
+                    <div className="px-5 pt-4 pb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.06em] font-semibold">
+                      <span className={confirm.step === 1 ? "text-blue-1" : "text-text-muted"}>
+                        1. Sort
+                      </span>
+                      <span className="text-text-muted">→</span>
+                      <span className={confirm.step === 2 ? "text-blue-1" : "text-text-muted"}>
+                        2. Review messages
                       </span>
                     </div>
-                    <div className="bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed text-text-primary whitespace-pre-line">
-                      {en}
-                      {"\n\n"}
-                      {es}
+                    <div className="p-5 border-b border-border">
+                      <div>
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                          Next punch-out
+                        </div>
+                        <div className="text-[28px] font-bold text-warning tabular leading-tight mt-0.5">
+                          {confirm.block.label.toUpperCase()}
+                        </div>
+                        <div className="text-[14px] text-text-secondary mt-1 tabular">
+                          <strong className="text-text-primary">{latestImport?.row_count ?? lct.length}</strong> rows in latest file
+                          {" · "}
+                          <strong className="text-text-primary">{totalByBlock[confirm.block.id] ?? 0}</strong> punches in this shift
+                        </div>
+                      </div>
                     </div>
-                  </>
-                );
-              })()}
-            </div>
-            <div className="overflow-y-auto p-5 flex-1 space-y-5">
-              {/* Excluded breakdown — transparency / trust builder */}
-              {confirm.excluded.length > 0 && (() => {
-                const groups: Record<string, Candidate[]> = {};
-                for (const c of confirm.excluded) {
-                  const k = c.reason ?? "Other";
-                  (groups[k] ||= []).push(c);
-                }
-                return (
-                  <div className="bg-bg/50 border border-border rounded-lg p-4">
-                    <div className="text-[12px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-2">
-                      {confirm.excluded.length} excluded · {confirm.recipients.length + confirm.excluded.length} total candidates
-                    </div>
-                    <ul className="space-y-2">
-                      {Object.entries(groups)
-                        .sort((a, b) => b[1].length - a[1].length)
-                        .map(([reason, list]) => (
-                          <li key={reason} className="text-[13px]">
-                            <details>
-                              <summary className="cursor-pointer flex items-baseline gap-2 hover:text-blue-1">
-                                <span className="font-semibold tabular text-text-primary">{list.length}</span>
-                                <span className="text-text-secondary">{reason}</span>
-                              </summary>
-                              <ul className="mt-1 ml-4 pl-3 border-l border-border space-y-0.5 text-[12px] text-text-secondary">
-                                {list.map((c) => (
-                                  <li key={c.payroll_number + c.employee_name}>
-                                    {c.employee_name} <span className="text-text-muted">· {c.job_site_name}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </details>
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                );
-              })()}
 
-              {confirm.recipients.length === 0 ? (
-                <p className="text-text-muted text-sm">
-                  No one to text for the {confirm.block.label} checkpoint.
+                    {/* Reminder type toggle — multi-select */}
+                    <div className="p-5 border-b border-border bg-bg/40 space-y-3">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">
+                        Which reminder? <span className="text-text-secondary font-normal normal-case ml-2">(select one or both)</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleKind("warning")}
+                          aria-pressed={hasWarning}
+                          className={`text-left border rounded-lg p-3 transition-colors ${
+                            hasWarning
+                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                              : "bg-surface border-border hover:border-warning"
+                          }`}
+                        >
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5 uppercase">
+                            <span className={`inline-block w-3 h-3 rounded border ${
+                              hasWarning ? "bg-warning border-warning" : "border-border bg-surface"
+                            }`} aria-hidden>
+                              {hasWarning && (
+                                <svg viewBox="0 0 12 12" className="w-full h-full text-white">
+                                  <path d="M2.5 6 L5 8.5 L9.5 3.5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </span>
+                            15-MINUTE REMINDER
+                          </div>
+                          <div className="text-[11px] text-text-muted mt-0.5">
+                            "Your shift will be ending soon"
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleKind("clocked_out")}
+                          aria-pressed={hasClocked}
+                          className={`text-left border rounded-lg p-3 transition-colors ${
+                            hasClocked
+                              ? "bg-warning/10 border-warning ring-2 ring-warning/30"
+                              : "bg-surface border-border hover:border-warning"
+                          }`}
+                        >
+                          <div className="text-[13px] font-semibold text-text-primary flex items-center gap-1.5 uppercase">
+                            <span className={`inline-block w-3 h-3 rounded border ${
+                              hasClocked ? "bg-warning border-warning" : "border-border bg-surface"
+                            }`} aria-hidden>
+                              {hasClocked && (
+                                <svg viewBox="0 0 12 12" className="w-full h-full text-white">
+                                  <path d="M2.5 6 L5 8.5 L9.5 3.5" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </span>
+                            END SHIFT REMINDER
+                          </div>
+                          <div className="text-[11px] text-text-muted mt-0.5">
+                            "Your shift has ended — please stop"
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Excluded + Exceptions — step 1 only */}
+                    {confirm.step === 1 && (
+                    <div className="overflow-y-auto p-5 flex-1 space-y-4">
+                      {confirm.excluded.length === 0 ? (
+                        <p className="text-[13px] text-text-muted">
+                          No exclusions at this checkpoint.
+                        </p>
+                      ) : (() => {
+                        // Classify each excluded candidate. Operational =
+                        // automatic, expected; Exceptions = needs human attention
+                        // (new hire, subcontractor, punch oddity, missing phone).
+                        const isException = (reason: string): boolean => {
+                          const r = reason.toLowerCase();
+                          return r.includes("phone") ||      // new hire / missing phone
+                            r.includes("subcontract") ||
+                            r.startsWith("sub") ||           // "Substitute / SUB"
+                            r.startsWith("substitute") ||
+                            r.startsWith("punch exception") ||
+                            r.startsWith("store exception") || // site-level note from field team
+                            r === "employee not active" ||
+                            r === "new employee";
+                        };
+                        const exclGroups: Record<string, Candidate[]> = {};
+                        const exceptGroups: Record<string, Candidate[]> = {};
+                        for (const c of confirm.excluded) {
+                          const k = c.reason ?? "Other";
+                          const bucket = isException(k) ? exceptGroups : exclGroups;
+                          (bucket[k] ||= []).push(c);
+                        }
+                        const exclTotal = Object.values(exclGroups).reduce((n, l) => n + l.length, 0);
+                        const exceptTotal = Object.values(exceptGroups).reduce((n, l) => n + l.length, 0);
+
+                        const renderGroup = (
+                          title: string,
+                          subtitle: string,
+                          total: number,
+                          groups: Record<string, Candidate[]>,
+                          accent: string,
+                        ) => (
+                          <div className="border border-border rounded-lg">
+                            <div className={`px-4 py-2 border-b border-border rounded-t-lg ${accent}`}>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em]">
+                                {title} · <span className="tabular">{total}</span>
+                              </div>
+                              <div className="text-[11px] opacity-75 mt-0.5">{subtitle}</div>
+                            </div>
+                            {total === 0 ? (
+                              <div className="px-4 py-3 text-[12px] text-text-muted">None</div>
+                            ) : (
+                              <ul className="divide-y divide-border">
+                                {Object.entries(groups)
+                                  .sort((a, b) => b[1].length - a[1].length)
+                                  .map(([reason, list]) => {
+                                    // Which column drove the exclusion? Used to
+                                    // highlight that cell in orange so the
+                                    // operator can immediately see why each row
+                                    // was filtered.
+                                    const r = reason.toLowerCase();
+                                    const highlight: "site" | "rate" | "time_in" | "time_out" | "employee" | "none" =
+                                      r.startsWith("store exception") ? "site" :
+                                      r === "already clocked out" ? "time_out" :
+                                      r === "lunch punch" ? "rate" :
+                                      r.startsWith("substitute") || r.startsWith("sub") ? "rate" :
+                                      r.startsWith("punch exception") ? "time_in" :
+                                      r === "manager / supervisor" || r === "employee not active" ? "employee" :
+                                      "none";
+                                    const hi = "bg-warning/15";
+                                    return (
+                                    <li key={reason} className="text-[13px]">
+                                      <details>
+                                        <summary className="cursor-pointer flex items-baseline gap-2 px-4 py-2 hover:bg-bg/40">
+                                          <span className="font-semibold tabular text-text-primary">
+                                            {list.length}
+                                          </span>
+                                          <span className="text-text-secondary">{reason}</span>
+                                        </summary>
+                                        <div className="mx-4 mb-3 rounded-md bg-bg/50 border border-border overflow-hidden">
+                                          <div className="overflow-x-auto">
+                                            <table className="w-full text-[12px] tabular border-collapse">
+                                              <thead className="bg-bg">
+                                                <tr className="text-left text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                                                  <th className={`px-3 py-2 font-semibold w-[100px] ${highlight === "site" ? "bg-warning/20 text-warning" : ""}`}>Jobsite&nbsp;ID</th>
+                                                  <th className={`px-3 py-2 font-semibold ${highlight === "site" ? "bg-warning/20 text-warning" : ""}`}>Jobsite&nbsp;Name</th>
+                                                  <th className="px-3 py-2 font-semibold w-[88px]">Payroll&nbsp;ID</th>
+                                                  <th className={`px-3 py-2 font-semibold w-[200px] ${highlight === "employee" ? "bg-warning/20 text-warning" : ""}`}>Employee&nbsp;Name</th>
+                                                  <th className={`px-3 py-2 font-semibold w-[80px] ${highlight === "rate" ? "bg-warning/20 text-warning" : ""}`}>Rate</th>
+                                                  <th className={`px-3 py-2 font-semibold text-right w-[90px] ${highlight === "time_in" ? "bg-warning/20 text-warning" : ""}`}>Time&nbsp;In</th>
+                                                  <th className={`px-3 py-2 font-semibold text-right w-[90px] ${highlight === "time_out" ? "bg-warning/20 text-warning" : ""}`}>Time&nbsp;Out</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {list.map((c, i) => {
+                                                  return (
+                                                    <tr
+                                                      key={c.payroll_number + c.employee_name}
+                                                      className={`${
+                                                        highlight !== "none"
+                                                          ? "bg-warning/15"
+                                                          : i % 2 === 0 ? "bg-surface" : "bg-bg/40"
+                                                      } border-t border-border/40`}
+                                                    >
+                                                      <td className={`px-3 py-1.5 text-text-primary font-semibold tabular ${highlight === "site" ? hi + " text-warning" : ""}`}>{c.site_id ?? "—"}</td>
+                                                      <td className={`px-3 py-1.5 text-text-secondary ${highlight === "site" ? hi : ""}`}>{c.job_site_name}</td>
+                                                      <td className="px-3 py-1.5 text-text-secondary font-medium">{c.payroll_number}</td>
+                                                      <td className={`px-3 py-1.5 text-text-primary whitespace-nowrap ${highlight === "employee" ? hi + " text-warning font-semibold" : ""}`}>{c.employee_name}</td>
+                                                      <td className={`px-3 py-1.5 ${highlight === "rate" ? hi : ""}`}>
+                                                        {c.rate_type ? (
+                                                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide border ${
+                                                            highlight === "rate"
+                                                              ? "bg-warning/20 text-warning border-warning/40"
+                                                              : "bg-bg text-text-secondary border-border"
+                                                          }`}>
+                                                            {c.rate_type}
+                                                          </span>
+                                                        ) : (
+                                                          <span className="text-text-muted">—</span>
+                                                        )}
+                                                      </td>
+                                                      <td className={`px-3 py-1.5 text-right whitespace-nowrap ${highlight === "time_in" ? hi + " text-warning font-semibold" : "text-text-secondary"}`}>{fmtTimeOnly(c.time_in)}</td>
+                                                      <td className={`px-3 py-1.5 text-right whitespace-nowrap ${highlight === "time_out" ? hi + " text-warning font-semibold" : "text-text-secondary"}`}>{fmtTimeOnly(c.time_out)}</td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      </details>
+                                    </li>
+                                    );
+                                  })}
+                              </ul>
+                            )}
+                          </div>
+                        );
+
+                        return (
+                          <>
+                            {renderGroup(
+                              "Excluded",
+                              "Already punched out, on lunch, manager — handled automatically",
+                              exclTotal,
+                              exclGroups,
+                              "bg-bg/60 text-text-secondary",
+                            )}
+                            {renderGroup(
+                              "Exceptions",
+                              "New employees, subcontractors, store exceptions — review before sending",
+                              exceptTotal,
+                              exceptGroups,
+                              "bg-warning/10 text-warning",
+                            )}
+                          </>
+                        );
+                      })()}
+                    </div>
+                    )}
+
+                    {/* ===== STEP 1 footer: Next ===== */}
+                    {confirm.step === 1 && (
+                      <div className="p-5 border-t border-border flex items-center justify-between gap-2">
+                        <button
+                          onClick={() => setConfirm(null)}
+                          className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                        >
+                          Cancel
+                        </button>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[12px] text-text-secondary tabular">
+                            Step 1 of 2 · sort excluded + exceptions
+                          </span>
+                          <button
+                            onClick={() => setConfirm({ ...confirm, step: 2 })}
+                            disabled={confirm.recipients.length === 0 || confirm.kinds.length === 0}
+                            className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                          >
+                            Next: review messages →
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ===== STEP 2: message preview + Send ===== */}
+                    {confirm.step === 2 && (
+                      <>
+                        <div className="overflow-y-auto flex-1 p-5 space-y-4 bg-bg/40">
+                          {hasWarning && (
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-blue-1 mb-2">
+                                15-minute reminder
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>English</span>
+                                    <span className="tabular">{confirm.warnEn.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.warnEn}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>Spanish</span>
+                                    <span className="tabular">{confirm.warnEs.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.warnEs}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {hasClocked && (
+                            <div>
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-blue-1 mb-2">
+                                END SHIFT
+                              </div>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>English</span>
+                                    <span className="tabular">{confirm.clockedEn.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.clockedEn}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.06em] text-text-muted flex items-baseline justify-between">
+                                    <span>Spanish</span>
+                                    <span className="tabular">{confirm.clockedEs.length} chars</span>
+                                  </div>
+                                  <div className="mt-1 bg-surface border border-border rounded-lg p-3 text-[13px] leading-relaxed whitespace-pre-line">
+                                    {confirm.clockedEs}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                          {!hasWarning && !hasClocked && (
+                            <div className="text-[12px] text-text-muted text-center">
+                              Pick a reminder type on step 1 to preview the message.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-5 border-t border-border flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => setConfirm({ ...confirm, step: 1 })}
+                            className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
+                          >
+                            ← Back
+                          </button>
+                          <div className="flex items-center gap-3">
+                            <span className="text-[12px] text-text-secondary tabular">
+                              Step 2 of 2
+                            </span>
+                            <button
+                              onClick={confirmSend}
+                              disabled={confirm.recipients.length === 0 || confirm.kinds.length === 0}
+                              className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
+                            >
+                              Send {totalTexts} text{totalTexts === 1 ? "" : "s"}
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                </>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {sentReceipt && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={() => setSentReceipt(null)}
+        >
+          <div
+            className="bg-surface border border-border rounded-xl shadow-card w-full max-w-3xl max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-border flex items-center justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-good">
+                  Sent · {sentReceipt.messages.length} message{sentReceipt.messages.length === 1 ? "" : "s"}
+                </div>
+                <h2 className="text-[18px] font-bold text-text-primary mt-0.5">
+                  {sentReceipt.blockLabel} ·{" "}
+                  {sentReceipt.kinds.map((k) =>
+                    k === "warning" ? "15-min reminder" : "End shift"
+                  ).join(" + ")}
+                </h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => emailClaudia(sentReceipt!)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg"
+                >
+                  Email Claudia
+                </button>
+                <button
+                  onClick={() => downloadSentSummary(sentReceipt!)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md border border-border bg-surface text-text-primary hover:bg-bg"
+                >
+                  Download CSV
+                </button>
+                <button
+                  onClick={() => setSentReceipt(null)}
+                  className="text-[13px] font-semibold px-3 py-1.5 rounded-md bg-blue-1 text-white hover:bg-blue-2"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+            {sentReceipt.emailStatus && sentReceipt.messages.length > 0 && (
+              <div
+                className={`px-5 py-2 text-[12px] tabular border-b border-border ${
+                  sentReceipt.emailStatus === "sent"
+                    ? "bg-good/10 text-good"
+                    : sentReceipt.emailStatus === "failed"
+                      ? "bg-danger/10 text-danger"
+                      : "bg-bg text-text-secondary"
+                }`}
+              >
+                {sentReceipt.emailStatus === "pending" && "Emailing summary to Claudia…"}
+                {sentReceipt.emailStatus === "sent" &&
+                  `Email summary sent to ${sentReceipt.emailDetail ?? "Claudia"}.`}
+                {sentReceipt.emailStatus === "failed" &&
+                  `Email failed: ${sentReceipt.emailDetail ?? "unknown"}. Use Email Claudia to retry.`}
+                {sentReceipt.emailStatus === "skipped" && "Nothing to email — 0 messages sent."}
+              </div>
+            )}
+            <div className="p-5">
+              {sentReceipt.messages.length === 0 ? (
+                <p className="text-[13px] text-text-secondary">
+                  No messages were sent (no eligible recipients on this run).
                 </p>
               ) : (
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                      <th className="py-2 pr-3 font-medium">Employee</th>
-                      <th className="py-2 pr-3 font-medium">Site</th>
-                      <th className="py-2 pr-3 font-medium">Phone</th>
-                      <th className="py-2 pr-3 font-medium">Lang</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {confirm.recipients.map((r) => (
-                      <tr key={r.payroll_number}>
-                        <td className="py-2 pr-3">{r.employee_name}</td>
-                        <td className="py-2 pr-3">{r.job_site_name}</td>
-                        <td className="py-2 pr-3 tabular">{r.cell_phone}</td>
-                        <td className="py-2 pr-3 text-text-muted">{r.language}</td>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px] tabular">
+                    <thead className="bg-bg text-text-muted uppercase text-[10px] tracking-[0.06em]">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-semibold">Sent</th>
+                        <th className="text-left px-3 py-2 font-semibold">Recipient</th>
+                        <th className="text-left px-3 py-2 font-semibold w-[50px]">Lang</th>
+                        <th className="text-left px-3 py-2 font-semibold">Type</th>
+                        <th className="text-left px-3 py-2 font-semibold">Message</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-border/60">
+                      {sentReceipt.messages.map((m) => (
+                        <tr key={m.id}>
+                          <td className="px-3 py-1.5 text-text-secondary whitespace-nowrap">{fmtTimeOnly(m.sent_at)}</td>
+                          <td className="px-3 py-1.5 text-text-primary font-semibold">{m.recipient_address}</td>
+                          <td className="px-3 py-1.5">
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-bg text-text-secondary border border-border">
+                              {m.language}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 text-text-secondary">
+                            {m.notification_type === "END_OF_SHIFT_WARNING" ? "Warning"
+                              : m.notification_type === "END_OF_SHIFT_CLOCKED_OUT" ? "End shift"
+                              : m.notification_type}
+                          </td>
+                          <td className="px-3 py-1.5 text-text-primary">{m.message_body}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </div>
-            <div className="p-5 border-t border-border flex justify-end gap-2">
-              <button
-                onClick={() => setConfirm(null)}
-                className="px-4 py-2 text-[13px] font-semibold text-text-secondary hover:text-text-primary"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSend}
-                disabled={confirm.recipients.length === 0}
-                className="px-4 py-2 text-[13px] font-semibold rounded-md bg-blue-1 hover:bg-blue-2 text-white disabled:opacity-50"
-              >
-                Send {confirm.recipients.length * 2} text
-                {confirm.recipients.length === 1 ? "s" : "s"}
-              </button>
             </div>
           </div>
         </div>
@@ -893,3 +1566,4 @@ export default function DailyControl() {
     </>
   );
 }
+
