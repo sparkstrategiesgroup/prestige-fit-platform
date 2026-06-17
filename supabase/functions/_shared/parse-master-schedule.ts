@@ -196,13 +196,23 @@ export async function diffMasterSchedule(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   bytes: Uint8Array,
+  filename?: string,
 ): Promise<DiffResult> {
   const empty = (msg: string): DiffResult => ({
     rowsParsed: 0, sitesCreated: 0, sitesUpdated: 0, unchanged: 0, changes: [],
     errors: [{ row: 0, message: msg }],
   });
 
-  const wb = XLSX.read(bytes, { type: "array" });
+  // The Schedule Report is exported as either .csv or .xlsx. CSV must be read
+  // as text (strip a leading BOM); xlsx as a byte array. CRLF + quoted fields
+  // (e.g. a store name containing a comma) are handled by the XLSX CSV reader.
+  // .xlsx is a ZIP (starts with "PK"); anything without that signature is text
+  // (CSV). Trust the .csv extension too, in case a name is given without bytes.
+  const looksXlsx = bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4B;
+  const isCsv = (filename?.toLowerCase().endsWith(".csv") ?? false) || !looksXlsx;
+  const wb = isCsv
+    ? XLSX.read(new TextDecoder().decode(bytes).replace(/^\uFEFF/, ""), { type: "string" })
+    : XLSX.read(bytes, { type: "array" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   if (!sheet) return empty("Workbook has no sheets");
   const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, blankrows: false });

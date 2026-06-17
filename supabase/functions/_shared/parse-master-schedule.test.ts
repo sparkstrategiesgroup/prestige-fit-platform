@@ -126,3 +126,30 @@ Deno.test("rejects a workbook whose columns are not the Schedule Report", async 
   assert(diff.errors.length > 0);
   assert(diff.errors[0].message.includes("header row") || diff.errors[0].message.includes("Missing required"));
 });
+
+Deno.test("reads the real CSV export (CRLF, quoted comma, 4-dp Lunch, trailing space)", async () => {
+  // Mirrors the real WinTeam export: CRLF lines, Lunch as "0.5000", a trailing
+  // space on HoursTypeDescription, and one store name quoted because it has a comma.
+  const csv = [
+    HEADERS.join(","),
+    "KOH0344,Kohls # 0344 - Westminster CO,CO,3003 - West,US/Mountain,08:00:00,16:30:00,1,,,,,,1,0.5000,8,0,0,0,0,0,8,16,Labor Direct - CO ",
+    'H299,"Home Depot, Waterloo",IA,4001 - Midwest,US/Central,05:00:00,10:00:00,1,1,1,1,1,1,1,0.0000,5,5,5,5,5,5,5,30,Labor Direct - IA',
+  ].join("\r\n");
+  const supabase = mockSupabase();
+  const diff = await diffMasterSchedule(supabase, new TextEncoder().encode(csv), "SCHEDULE_REPORT_20260615.csv");
+
+  assertEquals(diff.errors, []);
+  assertEquals(diff.rowsParsed, 2);
+
+  const koh = diff.changes.find((c) => c.site_id === "KOH0344" && c.change_type === "add")!.new_payload!;
+  assertEquals(koh.flex_hours, 30);                          // 0.5000h -> 30 min
+  assertEquals(koh.total_hours, 16);
+  assertEquals(koh.hours_type_description, "Labor Direct - CO"); // trailing space trimmed
+  assertEquals(koh.time_zone, "America/Denver");
+
+  // The quoted field containing a comma is preserved as the site name.
+  const h299 = supabase._inserts.find((i) => i.obj.site_id === "H299")!.obj;
+  assertEquals(h299.site_name, "Home Depot, Waterloo");
+  assertEquals(h299.dept_code, "4001");
+  assertEquals(h299.dept_description, "Midwest");
+});

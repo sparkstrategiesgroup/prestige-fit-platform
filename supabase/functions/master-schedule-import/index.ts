@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
   }
   const revisionId = rev.id;
 
-  const diff = await diffMasterSchedule(supabase, buf);
+  const diff = await diffMasterSchedule(supabase, buf, file.name);
 
   // Insert all change rows in chunks (Supabase has a payload size limit).
   const changeRows = diff.changes.map((c) => ({
