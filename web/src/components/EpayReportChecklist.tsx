@@ -26,6 +26,8 @@ type ImportPunch = {
   rate_type: string | null;
   time_in: string | null;
   time_out: string | null;
+  status: string | null;
+  reason: string | null;
 };
 
 function fmtTime(t: string | null): string {
@@ -70,10 +72,14 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
       return;
     }
     setLoading(true);
-    // The chip drill-in should show punches for THIS shift block (matching
-    // by label), not punches that came in via this specific import row —
-    // because fn_ingest_lct_row preserves the FIRST import_id on conflict,
-    // so a later hourly file's import_id has zero matching LCT rows.
+    // Show the same candidate set the runtime evaluates at this checkpoint,
+    // via fn_candidates_for_shift_block. This is authoritative because:
+    //   1. labor_control_tracking.shift_block_id is currently NULL for every
+    //      row (the importer's classifier depends on job_site_schedules, which
+    //      is empty - the system has moved to schedule_slot), so a direct
+    //      .eq("shift_block_id", id) filter on LCT would always return 0.
+    //   2. The runtime calls this same RPC to decide who to text, so what
+    //      the operator sees here is exactly what the system saw.
     (async () => {
       const today = new Date().toISOString().slice(0, 10);
       const { data: block } = await supabase
@@ -86,13 +92,10 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
         setLoading(false);
         return;
       }
-      const { data } = await supabase
-        .from("labor_control_tracking")
-        .select("payroll_number, employee_name, job_site_name, rate_type, time_in, time_out")
-        .eq("work_date", today)
-        .eq("shift_block_id", block.id)
-        .order("time_in")
-        .limit(2000);
+      const { data } = await supabase.rpc("fn_candidates_for_shift_block", {
+        p_shift_block_id: block.id,
+        p_work_date: today,
+      });
       setPunches((data ?? []) as ImportPunch[]);
       setLoading(false);
     })();
@@ -212,6 +215,7 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                         <th className="text-left px-3 py-2 font-semibold">Rate</th>
                         <th className="text-right px-3 py-2 font-semibold">Time In</th>
                         <th className="text-right px-3 py-2 font-semibold">Time Out</th>
+                        <th className="text-left px-3 py-2 font-semibold">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
@@ -244,6 +248,22 @@ export function EpayReportChecklist({ refreshKey = 0 }: Props) {
                                   hour: "numeric", minute: "2-digit", hour12: true,
                                 })
                               : "—"}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            {p.status === "ELIGIBLE" ? (
+                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-good/10 text-good">
+                                Eligible
+                              </span>
+                            ) : p.status === "EXCLUDED" ? (
+                              <span
+                                className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wide bg-bg text-text-muted border border-border"
+                                title={p.reason ?? undefined}
+                              >
+                                {p.reason ?? "Excluded"}
+                              </span>
+                            ) : (
+                              <span className="text-text-muted">—</span>
+                            )}
                           </td>
                         </tr>
                       ))}
