@@ -91,6 +91,7 @@ Deno.serve(async (req) => {
     revision_id: revisionId,
     rows_parsed: diff.rowsParsed,
     sites_created: diff.sitesCreated,
+    sites_updated: diff.sitesUpdated,
     unchanged: diff.unchanged,
     added,
     modified,
