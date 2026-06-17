@@ -114,9 +114,11 @@ export default function Scheduling() {
 
 /* -------------------------------------------------------------------------- */
 /* Master Schedule tab                                                        */
+/* Exported so the Reports page can surface the Schedule Report upload (the    */
+/* Scheduling page itself is not in the nav).                                  */
 /* -------------------------------------------------------------------------- */
 
-function MasterScheduleTab() {
+export function MasterScheduleTab() {
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [selected, setSelected] = useState<Revision | null>(null);
   const [changes, setChanges] = useState<Change[]>([]);
