@@ -18,7 +18,7 @@ type Import = {
   error_count: number | null;
   errors: unknown;
   completed_at: string | null;
-  created_at: string;
+  started_at: string;
 };
 
 function fmtTime(iso: string | null) {
@@ -121,7 +121,7 @@ export default function Reports() {
   const load = async () => {
     const { data } = await supabase
       .from("epay_imports")
-      .select("id, filename, status, row_count, imported_count, skipped_count, error_count, errors, completed_at, created_at")
+      .select("id, filename, status, row_count, imported_count, skipped_count, error_count, errors, completed_at, started_at")
       .order("id", { ascending: false })
       .limit(50);
     setImports((data ?? []) as Import[]);
@@ -302,7 +302,7 @@ export default function Reports() {
                       <td className="px-3 py-1.5 text-text-primary whitespace-nowrap max-w-[400px] truncate">
                         {i.filename}
                       </td>
-                      <td className="px-3 py-1.5 text-text-secondary whitespace-nowrap">{fmtTime(i.completed_at ?? i.created_at)}</td>
+                      <td className="px-3 py-1.5 text-text-secondary whitespace-nowrap">{fmtTime(i.completed_at ?? i.started_at)}</td>
                       <td className="px-3 py-1.5 text-right text-text-secondary">{i.row_count ?? "—"}</td>
                       <td className="px-3 py-1.5 text-right text-text-primary font-semibold">{i.imported_count ?? "—"}</td>
                       <td className="px-3 py-1.5 text-right">
