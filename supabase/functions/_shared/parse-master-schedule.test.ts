@@ -32,10 +32,19 @@ function mockSupabase(opts: { existingSites?: { site_id: string }[]; existingSlo
     from(table: string) {
       return {
         select(_cols: string) {
+          const result = table === "schedule_slot"
+            ? { data: opts.existingSlots ?? [], error: null }
+            : { data: opts.existingSites ?? [], error: null };
+          // Support both `await select(...)` (fetch-all) and `select(...).in(...)`.
           return {
             in(_col: string, _vals: string[]) {
-              if (table === "schedule_slot") return Promise.resolve({ data: opts.existingSlots ?? [], error: null });
-              return Promise.resolve({ data: opts.existingSites ?? [], error: null });
+              return Promise.resolve(result);
+            },
+            then(
+              onFulfilled: (v: typeof result) => unknown,
+              onRejected?: (e: unknown) => unknown,
+            ) {
+              return Promise.resolve(result).then(onFulfilled, onRejected);
             },
           };
         },
@@ -152,4 +161,29 @@ Deno.test("reads the real CSV export (CRLF, quoted comma, 4-dp Lunch, trailing s
   assertEquals(h299.site_name, "Home Depot, Waterloo");
   assertEquals(h299.dept_code, "4001");
   assertEquals(h299.dept_description, "Midwest");
+});
+
+Deno.test("matches an existing mixed-case site id case-insensitively (no upper-cased duplicate)", async () => {
+  const supabase = mockSupabase({
+    existingSites: [{ site_id: "ChPrestige" }],
+    existingSlots: [
+      { slot_id: "22222222-2222-2222-2222-222222222222", site_id: "ChPrestige", start_time: "12:00:00", end_time: "15:00:00", days_of_week: [false, false, false, true, false, true, false], flex_hours: 0, total_hours: 6, hours_type_description: null, time_zone: "America/Chicago", role: null },
+    ],
+  });
+  // JobNumber "ChPrestige" upper-cases to "CHPRESTIGE" but must resolve to the
+  // existing mixed-case row, not create an upper-cased duplicate site.
+  const row = ["ChPrestige", "Chicago Prestige Office", "IL", "50000 - Great Lakes Region", "US/Central", "12:00:00", "15:00:00", "", "", "", 1, "", 1, "", 0, 0, 0, 0, 3, 0, 3, 0, 6, ""];
+  const diff = await diffMasterSchedule(supabase, xlsxBytes([HEADERS, row]));
+
+  assertEquals(diff.errors, []);
+  // Existing site matched case-insensitively → updated by its existing casing, not created.
+  assertEquals(diff.sitesCreated, 0);
+  assertEquals(diff.sitesUpdated, 1);
+  assertEquals(supabase._updates[0].id, "ChPrestige");
+
+  // The add lands on the existing casing; the existing slot is removed (true replace).
+  const adds = diff.changes.filter((c) => c.change_type === "add");
+  assertEquals(adds.length, 1);
+  assertEquals(adds[0].site_id, "ChPrestige");
+  assertEquals(diff.changes.filter((c) => c.change_type === "remove").length, 1);
 });

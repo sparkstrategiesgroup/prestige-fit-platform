@@ -311,15 +311,26 @@ export async function diffMasterSchedule(
     return { rowsParsed: 0, sitesCreated: 0, sitesUpdated: 0, unchanged: 0, changes: [], errors };
   }
 
-  // ---- Upsert site attributes from the report (insert missing, update rest) --
-  const { data: existingSites } = await supabase.from("site").select("site_id").in("site_id", siteIds);
-  const existingSiteSet = new Set((existingSites ?? []).map((s: { site_id: string }) => s.site_id));
+  // ---- Resolve existing sites case-insensitively ---------------------------
+  // Existing site/schedule_slot ids are sometimes mixed-case (e.g. "ChPrestige")
+  // while the report's JobNumber upper-cases to "CHPRESTIGE". Match on UPPER()
+  // and keep the *existing* casing as canonical, so a re-upload replaces a store
+  // in place instead of creating an upper-cased duplicate. The site table is
+  // small (hundreds of rows), so fetching all ids is cheap.
+  const { data: allSites } = await supabase.from("site").select("site_id");
+  const upperToCanonical = new Map<string, string>();
+  for (const s of (allSites ?? []) as { site_id: string }[]) {
+    upperToCanonical.set(String(s.site_id).toUpperCase(), s.site_id);
+  }
+  const canonical = (upperId: string): string => upperToCanonical.get(upperId) ?? upperId;
 
+  // ---- Upsert site attributes from the report (insert missing, update rest) --
   let sitesCreated = 0;
   let sitesUpdated = 0;
-  for (const sid of siteIds) {
-    const a = siteAttrs.get(sid)!;
-    if (existingSiteSet.has(sid)) {
+  for (const upperId of siteIds) {
+    const a = siteAttrs.get(upperId)!;
+    const existingId = upperToCanonical.get(upperId);
+    if (existingId) {
       const patch: Record<string, unknown> = {};
       if (a.site_name) patch.site_name = a.site_name;
       if (a.dept_code) patch.dept_code = a.dept_code;
@@ -327,32 +338,35 @@ export async function diffMasterSchedule(
       if (a.state) patch.state = a.state;
       if (a.time_zone) patch.time_zone = a.time_zone;
       if (Object.keys(patch).length > 0) {
-        const { error } = await supabase.from("site").update(patch).eq("site_id", sid);
-        if (error) errors.push({ row: 0, message: `Could not update site ${sid}: ${error.message}` });
+        const { error } = await supabase.from("site").update(patch).eq("site_id", existingId);
+        if (error) errors.push({ row: 0, message: `Could not update site ${existingId}: ${error.message}` });
         else sitesUpdated++;
       }
     } else {
+      // Brand-new store: insert with the upper-cased id as the canonical id.
       const { error } = await supabase.from("site").insert({
-        site_id: sid,
-        site_name: a.site_name ?? sid,
+        site_id: upperId,
+        site_name: a.site_name ?? upperId,
         region_id: 1,
-        epay_site_code: sid,
-        chain: chainForSiteId(sid),
+        epay_site_code: upperId,
+        chain: chainForSiteId(upperId),
         time_zone: a.time_zone ?? "America/Chicago",
         dept_code: a.dept_code,
         dept_description: a.dept_description,
         state: a.state,
       });
-      if (error) errors.push({ row: 0, message: `Could not create site ${sid}: ${error.message}` });
-      else sitesCreated++;
+      if (error) errors.push({ row: 0, message: `Could not create site ${upperId}: ${error.message}` });
+      else { sitesCreated++; upperToCanonical.set(upperId, upperId); }
     }
   }
 
   // ---- Per-site REPLACE: remove existing slots, add report slots ------------
+  // Match on the canonical (existing-cased) ids so mixed-case rows are replaced.
+  const canonicalIds = siteIds.map(canonical);
   const { data: existingSlots } = await supabase
     .from("schedule_slot")
     .select("slot_id, site_id, start_time, end_time, days_of_week, flex_hours, total_hours, hours_type_description, time_zone, role")
-    .in("site_id", siteIds);
+    .in("site_id", canonicalIds);
 
   const changes: Change[] = [];
   for (const s of (existingSlots ?? [])) {
@@ -376,10 +390,11 @@ export async function diffMasterSchedule(
     });
   }
   for (const { siteId, payload } of proposed) {
+    const sid = canonical(siteId);
     changes.push({
       change_type: "add",
-      site_id: siteId,
-      slot_natural_key: naturalKey(siteId, payload),
+      site_id: sid,
+      slot_natural_key: naturalKey(sid, payload),
       target_slot_id: null,
       old_payload: null,
       new_payload: payload,
