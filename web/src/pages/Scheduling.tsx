@@ -225,16 +225,16 @@ export function MasterScheduleTab() {
             Upload Schedule Report
           </h2>
           <p className="text-[13px] text-text-secondary mt-1">
-            Drop the .xlsx straight from Excel. We'll diff it against the current
-            schedule and queue the changes for review.
+            Drop the .xlsx or .csv export straight from WinTeam. We'll diff it
+            against the current schedule and queue the changes for review.
           </p>
         </div>
         <label className="cursor-pointer bg-blue-1 hover:bg-blue-2 text-white text-[13px] font-semibold px-4 py-2 rounded-md transition-colors disabled:opacity-50">
-          {uploading ? "Uploading…" : "Choose .xlsx file"}
+          {uploading ? "Uploading…" : "Choose .xlsx or .csv file"}
           <input
             ref={fileRef}
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,.csv"
             onChange={handleUpload}
             disabled={uploading}
             className="hidden"
