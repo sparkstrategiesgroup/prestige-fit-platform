@@ -73,6 +73,19 @@ Live schema is ~40 tables across these domains. Field-level detail lives in the 
 
 See the technical spec §6 for full integration contracts.
 
+### WinTeam scheduled exports — file naming
+
+WinTeam scheduled reports export to CSV named `%ID%_%yyyyMMdd%_%HHmm%`
+(report identifier, then date, then 24-hour time). The leading identifier tells
+inbound automation which report a file is, so files can be routed by that prefix.
+
+| Report | Identifier (`%ID%`) | Example file | Schedule |
+|---|---|---|---|
+| Employee List | `113` | `113_20260622_1736.csv` | **Daily, 6:00pm CST** |
+| Schedule Report (Master Schedule List) | `SCHEDULE REPORT91` | `SCHEDULE REPORT91_20260615_0600.csv` | Manual / periodic |
+
+**Employee List (`113`)** columns: `EmployeeID, FirstName, LastName, Phone1, Phone2, PrimaryJob, PrimaryJobSite, EEStatus` — maps to the `employee` table (`PrimaryJob` = primary job/site code, `PrimaryJobSite` = site name, `EEStatus` = Active/…). Contains employee PII (names, phone numbers); don't commit sample files.
+
 ## Setup
 
 ### Frontend (web)
