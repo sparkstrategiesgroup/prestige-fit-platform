@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { HeaderBar } from "../components/HeaderBar";
 import { ShiftChangeRequestCard } from "../components/ShiftChangeRequestCard";
 import { StoreExceptionsCard } from "../components/StoreExceptionsCard";
+import { MasterScheduleTab } from "./Scheduling";
 import { supabase } from "../lib/supabase";
 
 const FUNCTIONS_URL = `${
@@ -197,6 +198,10 @@ export default function Reports() {
             </div>
           )}
         </section>
+
+        {/* Schedule Report (WinTeam Master Schedule List) — upload + diff/approve.
+            Source of truth for each store's schedule, department, and hours. */}
+        <MasterScheduleTab />
 
         {/* Blueforce Tracker upload — store exceptions source of truth */}
         <section className="bg-surface border border-border rounded-xl p-5">

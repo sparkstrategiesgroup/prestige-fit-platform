@@ -1,40 +1,52 @@
-// Shared parser for the Master Schedule List XLSX.
-// One row per (site, start_time, end_time, hours_type_id). Columns match the
-// schedule_slot table 1:1 — see supabase/migrations/20260520010200_schedule_slot.sql.
+// Shared parser for the WinTeam "Schedule Report" XLSX (labelled "Upload
+// Schedule Report" in the UI; the source of truth for every store's schedule,
+// department, and hours).
+//
+// The REAL WinTeam export columns are:
+//   JobNumber, JobDescription, JobState, Dept, TimeZoneName, StartTime, EndTime,
+//   Sun, Mon, Tues, Wed, Thur, Fri, Sat, Lunch,
+//   SunTotal..SatTotal, TotalHours, HoursTypeDescription
+// (The previous parser expected HoursTypeID / Tue / Thu / TimeZone / SupervisorID
+//  / adjustment+tolerance columns that this export does not have, so every real
+//  upload was rejected with "Missing required columns".)
+//
+// Behaviour:
+//   * Reads the workbook, locates the header row, maps each column by name
+//     (tolerant of Tue/Tues, Thu/Thur, TimeZone/TimeZoneName aliases).
+//   * Upserts each site's report-sourced attributes (name, department, state,
+//     time zone) onto `site` — these are corrections from the authoritative
+//     report and apply at upload time, like the existing site auto-create.
+//   * Emits a per-site REPLACE diff: for every site in the upload, one `remove`
+//     per existing schedule_slot row + one `add` per report row. This is robust
+//     to the dirty baseline (which has duplicate rows and no stable key) and
+//     makes schedule_slot for each uploaded site exactly match the report. The
+//     caller inserts the master_schedule_change rows; fn_apply applies them on
+//     approval. Sites NOT in the upload are left untouched.
 //
 // Usage:
-//   const diff = await diffMasterSchedule(supabase, bytes, revisionId);
-//   // diff = { rowsParsed, changes: [{change_type, site_id, natural_key, ...}], sitesCreated, errors }
-//
-// The function reads the workbook, normalizes each row into a "proposed slot"
-// payload, fetches existing schedule_slot rows for the affected sites, and
-// emits one change record per (add | modify | remove). The caller is
-// responsible for inserting master_schedule_change rows.
+//   const diff = await diffMasterSchedule(supabase, bytes);
 
 import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
+// One schedule_slot row's worth of report data.
 export type SlotPayload = {
-  start_time: string;
-  end_time: string;
-  pre_arrival_adjustment: number | null;
-  post_arrival_adjustment: number | null;
-  pre_departure_adjustment: number | null;
-  post_departure_adjustment: number | null;
-  hours_type_id: number | null;
-  days_of_week: boolean[];
-  min_holiday: number | null;
-  page_absence: boolean;
-  flex_hours: number | null;
-  pre_shift_tolerance: number | null;
-  post_shift_tolerance: number | null;
-  periodic_check: boolean;
-  pc_tolerance: number | null;
-  supervisor_id: string | null;
-  notify_contact: string | null;
-  page_no_show: boolean;
-  no_show_pager: string | null;
-  time_zone: string;
-  role: string | null;
+  start_time: string;                    // "HH:MM:SS"
+  end_time: string;                      // "HH:MM:SS"
+  days_of_week: boolean[];               // length 7, index 0 = Sunday
+  flex_hours: number | null;             // unpaid lunch in MINUTES (Lunch hrs × 60)
+  total_hours: number | null;            // report "TotalHours"
+  hours_type_description: string | null; // report "HoursTypeDescription"
+  time_zone: string;                     // normalized IANA tz
+  role: string | null;                   // not present in the report
+};
+
+// Site-level attributes the report carries on every row for a store.
+export type SiteAttrs = {
+  site_name: string | null;
+  dept_code: string | null;
+  dept_description: string | null;
+  state: string | null;
+  time_zone: string | null;
 };
 
 export type Change = {
@@ -49,69 +61,113 @@ export type Change = {
 export type DiffResult = {
   rowsParsed: number;
   sitesCreated: number;
+  sitesUpdated: number;
   unchanged: number;
   changes: Change[];
   errors: Array<{ row: number; message: string }>;
 };
 
-// Column header mapping. The user's file headers are the canonical names.
-const COLS = [
-  "JobNumber","StartTime","EndTime",
-  "PreArrivalAdjustment","PostArrivalAdjustment",
-  "PreDepartureAdjustment","PostDepartureAdjustment",
-  "HoursTypeID","Sun","Mon","Tue","Wed","Thu","Fri","Sat",
-  "MinHoliday","PageAbsence","FlexHours",
-  "PreShiftTolerance","PostShiftTolerance",
-  "PeriodicCheck","PCTolerance",
-  "SupervisorID","NotifyContact",
-  "PageNoShow","NoShowPager","TimeZone",
+const MAX_HEADER_SCAN = 12;
+
+// Column name → accepted header aliases (matched case-insensitively, trimmed).
+const COL = {
+  jobNumber: ["JobNumber", "Job Number", "Job #"],
+  jobDescription: ["JobDescription", "Job Description", "JobName"],
+  jobState: ["JobState", "State"],
+  dept: ["Dept", "Department"],
+  timeZone: ["TimeZoneName", "TimeZone", "Time Zone"],
+  startTime: ["StartTime", "Start Time", "Start"],
+  endTime: ["EndTime", "End Time", "End"],
+  lunch: ["Lunch", "LunchHours", "Meal"],
+  totalHours: ["TotalHours", "Total Hours", "Total"],
+  hoursType: ["HoursTypeDescription", "HoursType", "Hours Type", "HoursTypeID"],
+} as const;
+
+const DAY_ALIASES: string[][] = [
+  ["Sun", "Sunday"],
+  ["Mon", "Monday"],
+  ["Tues", "Tue", "Tuesday", "Tu"],
+  ["Wed", "Wednesday", "Weds"],
+  ["Thur", "Thu", "Thurs", "Thursday", "Th"],
+  ["Fri", "Friday"],
+  ["Sat", "Saturday"],
 ];
+
+const TZ_MAP: Record<string, string> = {
+  "US/EASTERN": "America/New_York",
+  "US/CENTRAL": "America/Chicago",
+  "US/MOUNTAIN": "America/Denver",
+  "US/PACIFIC": "America/Los_Angeles",
+  "US/ARIZONA": "America/Phoenix",
+  "US/HAWAII": "Pacific/Honolulu",
+  "US/ALASKA": "America/Anchorage",
+  "US/MICHIGAN": "America/Detroit",
+};
+
+function colIndex(headers: string[], names: readonly string[]): number {
+  const norm = headers.map((h) => h.trim().toLowerCase());
+  for (const n of names) {
+    const i = norm.indexOf(n.toLowerCase());
+    if (i !== -1) return i;
+  }
+  return -1;
+}
 
 function toTime(v: unknown): string | null {
   if (v == null || v === "") return null;
-  // Excel time serial: fraction of a day
+  // Excel time serial: a fraction of a day.
   if (typeof v === "number") {
     const total = Math.round(v * 86400);
-    const h = Math.floor(total / 3600);
+    const h = Math.floor(total / 3600) % 24;
     const m = Math.floor((total % 3600) / 60);
     const s = total % 60;
-    return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
-  // String like "07:00:00" or "7:00 AM"
   const s = String(v).trim();
   const m24 = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-  if (m24) {
-    return `${m24[1].padStart(2,"0")}:${m24[2]}:${(m24[3] ?? "00").padStart(2,"0")}`;
-  }
+  if (m24) return `${m24[1].padStart(2, "0")}:${m24[2]}:${(m24[3] ?? "00").padStart(2, "0")}`;
   const m12 = s.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (m12) {
     let h = parseInt(m12[1], 10);
     const ampm = m12[3].toUpperCase();
     if (ampm === "PM" && h < 12) h += 12;
     if (ampm === "AM" && h === 12) h = 0;
-    return `${String(h).padStart(2,"0")}:${m12[2]}:00`;
+    return `${String(h).padStart(2, "0")}:${m12[2]}:00`;
   }
   return null;
 }
 
-function toInt(v: unknown): number | null {
-  if (v == null || v === "") return null;
-  const n = typeof v === "number" ? v : parseInt(String(v).trim(), 10);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
-}
-
-function toBool(v: unknown, dflt = false): boolean {
-  if (v == null || v === "") return dflt;
+function toBool(v: unknown): boolean {
+  if (v == null || v === "") return false;
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
   const s = String(v).trim().toLowerCase();
-  return s === "yes" || s === "y" || s === "true" || s === "1";
+  return s === "1" || s === "yes" || s === "y" || s === "true" || s === "x";
+}
+
+function toNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v).trim());
+  return Number.isFinite(n) ? n : null;
 }
 
 function toStr(v: unknown): string | null {
-  if (v == null || v === "") return null;
+  if (v == null) return null;
   const s = String(v).trim();
   return s.length === 0 ? null : s;
+}
+
+function normalizeTz(v: string | null): string | null {
+  if (!v) return null;
+  return TZ_MAP[v.trim().toUpperCase()] ?? v.trim();
+}
+
+// "3003 - West" → { code: "3003", description: "West" }
+function splitDept(v: string | null): { code: string | null; description: string | null } {
+  if (!v) return { code: null, description: null };
+  const m = v.trim().match(/^(.+?)\s+-\s+(.+)$/);
+  if (m) return { code: m[1].trim(), description: m[2].trim() };
+  return { code: v.trim(), description: null };
 }
 
 function chainForSiteId(code: string): string | null {
@@ -121,242 +177,229 @@ function chainForSiteId(code: string): string | null {
   if (up.startsWith("JJM")) return "JJM";
   if (up.startsWith("CAT")) return "CAT";
   if (up.startsWith("ADI")) return "ADI";
-  if (up.startsWith("T"))   return "TARGET";
-  if (up.startsWith("H"))   return "HARDLINES";
+  if (up.startsWith("T")) return "TARGET";
+  if (up.startsWith("H")) return "HARDLINES";
   return null;
 }
 
-function naturalKey(siteId: string, startTime: string, endTime: string, hoursTypeId: number | null): string {
-  return `${siteId}|${startTime}|${endTime}|${hoursTypeId ?? ""}`;
-}
-
-function payloadsDiffer(a: SlotPayload, b: SlotPayload): boolean {
-  // Compare all fields. days_of_week is an array — compare elementwise.
-  const keys: (keyof SlotPayload)[] = [
-    "start_time","end_time",
-    "pre_arrival_adjustment","post_arrival_adjustment",
-    "pre_departure_adjustment","post_departure_adjustment",
-    "hours_type_id","min_holiday","page_absence","flex_hours",
-    "pre_shift_tolerance","post_shift_tolerance",
-    "periodic_check","pc_tolerance",
-    "supervisor_id","notify_contact",
-    "page_no_show","no_show_pager","time_zone","role",
-  ];
-  for (const k of keys) {
-    if (a[k] !== b[k]) return true;
-  }
-  for (let i = 0; i < 7; i++) {
-    if (a.days_of_week[i] !== b.days_of_week[i]) return true;
-  }
-  return false;
-}
+const daysBits = (days: boolean[]): string => days.map((b) => (b ? "1" : "0")).join("");
+const naturalKey = (site: string, p: { start_time: string; end_time: string; days_of_week: boolean[] }): string =>
+  `${site}|${p.start_time}|${p.end_time}|${daysBits(p.days_of_week)}`;
 
 /**
- * Parse the Master Schedule List XLSX, compute the diff against the current
- * schedule_slot table, and return the change list. Does NOT write changes —
- * the Edge Function does that.
+ * Parse the Schedule Report XLSX, upsert each site's report attributes, and
+ * return a per-site REPLACE diff (remove existing slots + add report slots for
+ * every site present in the upload). Does NOT write schedule_slot — the Edge
+ * Function inserts the change rows and fn_apply applies them on approval.
  */
 export async function diffMasterSchedule(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   bytes: Uint8Array,
+  filename?: string,
 ): Promise<DiffResult> {
-  const wb = XLSX.read(bytes, { type: "array" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
-    header: 1, raw: true, blankrows: false,
+  const empty = (msg: string): DiffResult => ({
+    rowsParsed: 0, sitesCreated: 0, sitesUpdated: 0, unchanged: 0, changes: [],
+    errors: [{ row: 0, message: msg }],
   });
 
-  if (rows.length < 2) {
-    return { rowsParsed: 0, sitesCreated: 0, unchanged: 0, changes: [],
-             errors: [{ row: 0, message: "Workbook is empty" }] };
-  }
+  // The Schedule Report is exported as either .csv or .xlsx. CSV must be read
+  // as text (strip a leading BOM); xlsx as a byte array. CRLF + quoted fields
+  // (e.g. a store name containing a comma) are handled by the XLSX CSV reader.
+  // .xlsx is a ZIP (starts with "PK"); anything without that signature is text
+  // (CSV). Trust the .csv extension too, in case a name is given without bytes.
+  const looksXlsx = bytes.length > 1 && bytes[0] === 0x50 && bytes[1] === 0x4B;
+  const isCsv = (filename?.toLowerCase().endsWith(".csv") ?? false) || !looksXlsx;
+  const wb = isCsv
+    ? XLSX.read(new TextDecoder().decode(bytes).replace(/^\uFEFF/, ""), { type: "string" })
+    : XLSX.read(bytes, { type: "array" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  if (!sheet) return empty("Workbook has no sheets");
+  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, blankrows: false });
+  if (rows.length < 2) return empty("Workbook is empty");
 
-  // Map column index by header
+  // Locate the header row (the export sometimes carries title rows above it).
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(rows.length, MAX_HEADER_SCAN); i++) {
+    // deno-lint-ignore no-explicit-any
+    const cells = (rows[i] ?? []).map((c: any) => String(c ?? "").trim());
+    if (colIndex(cells, COL.jobNumber) !== -1 && colIndex(cells, COL.startTime) !== -1) {
+      headerIdx = i;
+      break;
+    }
+  }
+  if (headerIdx === -1) return empty("Could not find a header row with 'JobNumber' and 'StartTime'");
+
   // deno-lint-ignore no-explicit-any
-  const headerRow = (rows[0] ?? []).map((h: any) => String(h ?? "").trim());
-  const idx: Record<string, number> = {};
-  for (const col of COLS) idx[col] = headerRow.indexOf(col);
-  const missing = COLS.filter((c) => idx[c] === -1);
-  if (missing.length) {
-    return { rowsParsed: 0, sitesCreated: 0, unchanged: 0, changes: [],
-             errors: [{ row: 1, message: `Missing required columns: ${missing.join(", ")}` }] };
-  }
+  const headers = (rows[headerIdx] ?? []).map((h: any) => String(h ?? "").trim());
+  const idx = {
+    jobNumber: colIndex(headers, COL.jobNumber),
+    jobDescription: colIndex(headers, COL.jobDescription),
+    jobState: colIndex(headers, COL.jobState),
+    dept: colIndex(headers, COL.dept),
+    timeZone: colIndex(headers, COL.timeZone),
+    startTime: colIndex(headers, COL.startTime),
+    endTime: colIndex(headers, COL.endTime),
+    lunch: colIndex(headers, COL.lunch),
+    totalHours: colIndex(headers, COL.totalHours),
+    hoursType: colIndex(headers, COL.hoursType),
+    days: DAY_ALIASES.map((a) => colIndex(headers, a)),
+  };
 
-  // First pass: parse rows, collect unique sites, build the proposed map.
+  // Required: JobNumber, StartTime, EndTime, and all seven day columns.
+  const missing: string[] = [];
+  if (idx.jobNumber === -1) missing.push("JobNumber");
+  if (idx.startTime === -1) missing.push("StartTime");
+  if (idx.endTime === -1) missing.push("EndTime");
+  const DAY_NAMES = ["Sun", "Mon", "Tues", "Wed", "Thur", "Fri", "Sat"];
+  idx.days.forEach((d, i) => { if (d === -1) missing.push(DAY_NAMES[i]); });
+  if (missing.length) return empty(`Missing required columns: ${missing.join(", ")}`);
+
   const errors: DiffResult["errors"] = [];
-  const proposed: Map<string, { siteId: string; payload: SlotPayload }> = new Map();
-  const siteIds = new Set<string>();
-  let rowsParsed = 0;
+  const proposed: Array<{ siteId: string; payload: SlotPayload }> = [];
+  const seen = new Set<string>();
+  const siteAttrs = new Map<string, SiteAttrs>();
 
-  for (let r = 1; r < rows.length; r++) {
+  for (let r = headerIdx + 1; r < rows.length; r++) {
     const row = rows[r];
     if (!row) continue;
-    const siteIdRaw = toStr(row[idx["JobNumber"]]);
+    const siteIdRaw = toStr(row[idx.jobNumber]);
     if (!siteIdRaw) continue;
     const siteId = siteIdRaw.toUpperCase();
 
-    const startTime = toTime(row[idx["StartTime"]]);
-    const endTime = toTime(row[idx["EndTime"]]);
-    if (!startTime || !endTime) {
-      errors.push({ row: r + 1, message: `Row ${r+1}: missing or unparseable StartTime/EndTime` });
+    const start_time = toTime(row[idx.startTime]);
+    const end_time = toTime(row[idx.endTime]);
+    if (!start_time || !end_time) {
+      errors.push({ row: r + 1, message: `Row ${r + 1} (${siteId}): unparseable StartTime/EndTime` });
       continue;
     }
-    const hoursTypeId = toInt(row[idx["HoursTypeID"]]);
 
-    const days_of_week: boolean[] = [
-      toBool(row[idx["Sun"]]),
-      toBool(row[idx["Mon"]]),
-      toBool(row[idx["Tue"]]),
-      toBool(row[idx["Wed"]]),
-      toBool(row[idx["Thu"]]),
-      toBool(row[idx["Fri"]]),
-      toBool(row[idx["Sat"]]),
-    ];
-
+    const days_of_week = idx.days.map((d) => (d === -1 ? false : toBool(row[d])));
+    const lunch = idx.lunch === -1 ? null : toNum(row[idx.lunch]);
     const payload: SlotPayload = {
-      start_time: startTime,
-      end_time: endTime,
-      pre_arrival_adjustment: toInt(row[idx["PreArrivalAdjustment"]]),
-      post_arrival_adjustment: toInt(row[idx["PostArrivalAdjustment"]]),
-      pre_departure_adjustment: toInt(row[idx["PreDepartureAdjustment"]]),
-      post_departure_adjustment: toInt(row[idx["PostDepartureAdjustment"]]),
-      hours_type_id: hoursTypeId,
+      start_time,
+      end_time,
       days_of_week,
-      min_holiday: toInt(row[idx["MinHoliday"]]),
-      page_absence: toBool(row[idx["PageAbsence"]]),
-      flex_hours: toInt(row[idx["FlexHours"]]),
-      pre_shift_tolerance: toInt(row[idx["PreShiftTolerance"]]),
-      post_shift_tolerance: toInt(row[idx["PostShiftTolerance"]]),
-      periodic_check: toBool(row[idx["PeriodicCheck"]]),
-      pc_tolerance: toInt(row[idx["PCTolerance"]]),
-      supervisor_id: toStr(row[idx["SupervisorID"]]),
-      notify_contact: toStr(row[idx["NotifyContact"]]),
-      page_no_show: toBool(row[idx["PageNoShow"]]),
-      no_show_pager: toStr(row[idx["NoShowPager"]]),
-      time_zone: toStr(row[idx["TimeZone"]]) ?? "America/Chicago",
-      role: null, // Role isn't in the Master Schedule List; managed separately.
+      flex_hours: lunch == null ? null : Math.round(lunch * 60),
+      total_hours: idx.totalHours === -1 ? null : toNum(row[idx.totalHours]),
+      hours_type_description: idx.hoursType === -1 ? null : toStr(row[idx.hoursType]),
+      time_zone: normalizeTz(idx.timeZone === -1 ? null : toStr(row[idx.timeZone])) ?? "America/Chicago",
+      role: null,
     };
 
-    const nk = naturalKey(siteId, startTime, endTime, hoursTypeId);
-    if (proposed.has(nk)) {
-      errors.push({ row: r + 1, message: `Row ${r+1}: duplicate natural key ${nk}` });
-      continue;
+    // Capture site-level attributes (consistent across a site's rows).
+    if (!siteAttrs.has(siteId)) {
+      const dept = splitDept(idx.dept === -1 ? null : toStr(row[idx.dept]));
+      siteAttrs.set(siteId, {
+        site_name: idx.jobDescription === -1 ? null : toStr(row[idx.jobDescription]),
+        dept_code: dept.code,
+        dept_description: dept.description,
+        state: idx.jobState === -1 ? null : toStr(row[idx.jobState]),
+        time_zone: payload.time_zone,
+      });
     }
-    proposed.set(nk, { siteId, payload });
-    siteIds.add(siteId);
-    rowsParsed++;
+
+    // Skip exact-duplicate rows within the upload.
+    const sig = `${naturalKey(siteId, payload)}|${payload.flex_hours}|${payload.total_hours}|${payload.hours_type_description ?? ""}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    proposed.push({ siteId, payload });
   }
 
-  // Auto-create any missing sites (same approach as the punches importer).
+  const siteIds = Array.from(siteAttrs.keys());
+  if (siteIds.length === 0) {
+    return { rowsParsed: 0, sitesCreated: 0, sitesUpdated: 0, unchanged: 0, changes: [], errors };
+  }
+
+  // ---- Resolve existing sites case-insensitively ---------------------------
+  // Existing site/schedule_slot ids are sometimes mixed-case (e.g. "ChPrestige")
+  // while the report's JobNumber upper-cases to "CHPRESTIGE". Match on UPPER()
+  // and keep the *existing* casing as canonical, so a re-upload replaces a store
+  // in place instead of creating an upper-cased duplicate. The site table is
+  // small (hundreds of rows), so fetching all ids is cheap.
+  const { data: allSites } = await supabase.from("site").select("site_id");
+  const upperToCanonical = new Map<string, string>();
+  for (const s of (allSites ?? []) as { site_id: string }[]) {
+    upperToCanonical.set(String(s.site_id).toUpperCase(), s.site_id);
+  }
+  const canonical = (upperId: string): string => upperToCanonical.get(upperId) ?? upperId;
+
+  // ---- Upsert site attributes from the report (insert missing, update rest) --
   let sitesCreated = 0;
-  const { data: existingSites } = await supabase
-    .from("site")
-    .select("site_id")
-    .in("site_id", Array.from(siteIds));
-  const existingSiteSet = new Set((existingSites ?? []).map((s: { site_id: string }) => s.site_id));
-
-  for (const sid of siteIds) {
-    if (existingSiteSet.has(sid)) continue;
-    const chain = chainForSiteId(sid);
-    const { error } = await supabase.from("site").insert({
-      site_id: sid,
-      site_name: sid,
-      region_id: 1,
-      epay_site_code: sid,
-      chain,
-      time_zone: "America/Chicago",
-    });
-    if (error) {
-      errors.push({ row: 0, message: `Could not create site ${sid}: ${error.message}` });
+  let sitesUpdated = 0;
+  for (const upperId of siteIds) {
+    const a = siteAttrs.get(upperId)!;
+    const existingId = upperToCanonical.get(upperId);
+    if (existingId) {
+      const patch: Record<string, unknown> = {};
+      if (a.site_name) patch.site_name = a.site_name;
+      if (a.dept_code) patch.dept_code = a.dept_code;
+      if (a.dept_description) patch.dept_description = a.dept_description;
+      if (a.state) patch.state = a.state;
+      if (a.time_zone) patch.time_zone = a.time_zone;
+      if (Object.keys(patch).length > 0) {
+        const { error } = await supabase.from("site").update(patch).eq("site_id", existingId);
+        if (error) errors.push({ row: 0, message: `Could not update site ${existingId}: ${error.message}` });
+        else sitesUpdated++;
+      }
     } else {
-      sitesCreated++;
-      existingSiteSet.add(sid);
+      // Brand-new store: insert with the upper-cased id as the canonical id.
+      const { error } = await supabase.from("site").insert({
+        site_id: upperId,
+        site_name: a.site_name ?? upperId,
+        region_id: 1,
+        epay_site_code: upperId,
+        chain: chainForSiteId(upperId),
+        time_zone: a.time_zone ?? "America/Chicago",
+        dept_code: a.dept_code,
+        dept_description: a.dept_description,
+        state: a.state,
+      });
+      if (error) errors.push({ row: 0, message: `Could not create site ${upperId}: ${error.message}` });
+      else { sitesCreated++; upperToCanonical.set(upperId, upperId); }
     }
   }
 
-  // Fetch the current schedule_slot rows for these sites.
+  // ---- Per-site REPLACE: remove existing slots, add report slots ------------
+  // Match on the canonical (existing-cased) ids so mixed-case rows are replaced.
+  const canonicalIds = siteIds.map(canonical);
   const { data: existingSlots } = await supabase
     .from("schedule_slot")
-    .select("slot_id, site_id, start_time, end_time, hours_type_id, days_of_week, pre_arrival_adjustment, post_arrival_adjustment, pre_departure_adjustment, post_departure_adjustment, min_holiday, page_absence, flex_hours, pre_shift_tolerance, post_shift_tolerance, periodic_check, pc_tolerance, supervisor_id, notify_contact, page_no_show, no_show_pager, time_zone, role")
-    .in("site_id", Array.from(siteIds));
+    .select("slot_id, site_id, start_time, end_time, days_of_week, flex_hours, total_hours, hours_type_description, time_zone, role")
+    .in("site_id", canonicalIds);
 
-  // Map existing by natural key
-  const existingMap: Map<string, { slot_id: string; payload: SlotPayload }> = new Map();
-  for (const row of (existingSlots ?? [])) {
-    const nk = naturalKey(row.site_id, row.start_time, row.end_time, row.hours_type_id);
-    existingMap.set(nk, {
-      slot_id: row.slot_id,
-      payload: {
-        start_time: row.start_time,
-        end_time: row.end_time,
-        pre_arrival_adjustment: row.pre_arrival_adjustment,
-        post_arrival_adjustment: row.post_arrival_adjustment,
-        pre_departure_adjustment: row.pre_departure_adjustment,
-        post_departure_adjustment: row.post_departure_adjustment,
-        hours_type_id: row.hours_type_id,
-        days_of_week: row.days_of_week,
-        min_holiday: row.min_holiday,
-        page_absence: row.page_absence,
-        flex_hours: row.flex_hours,
-        pre_shift_tolerance: row.pre_shift_tolerance,
-        post_shift_tolerance: row.post_shift_tolerance,
-        periodic_check: row.periodic_check,
-        pc_tolerance: row.pc_tolerance,
-        supervisor_id: row.supervisor_id,
-        notify_contact: row.notify_contact,
-        page_no_show: row.page_no_show,
-        no_show_pager: row.no_show_pager,
-        time_zone: row.time_zone,
-        role: row.role,
-      },
+  const changes: Change[] = [];
+  for (const s of (existingSlots ?? [])) {
+    const old_payload: SlotPayload = {
+      start_time: s.start_time,
+      end_time: s.end_time,
+      days_of_week: s.days_of_week ?? [false, false, false, false, false, false, false],
+      flex_hours: s.flex_hours,
+      total_hours: s.total_hours ?? null,
+      hours_type_description: s.hours_type_description ?? null,
+      time_zone: s.time_zone ?? "America/Chicago",
+      role: s.role ?? null,
+    };
+    changes.push({
+      change_type: "remove",
+      site_id: s.site_id,
+      slot_natural_key: naturalKey(s.site_id, old_payload),
+      target_slot_id: s.slot_id,
+      old_payload,
+      new_payload: null,
+    });
+  }
+  for (const { siteId, payload } of proposed) {
+    const sid = canonical(siteId);
+    changes.push({
+      change_type: "add",
+      site_id: sid,
+      slot_natural_key: naturalKey(sid, payload),
+      target_slot_id: null,
+      old_payload: null,
+      new_payload: payload,
     });
   }
 
-  // Diff
-  const changes: Change[] = [];
-  let unchanged = 0;
-  for (const [nk, { siteId, payload }] of proposed) {
-    const existing = existingMap.get(nk);
-    if (!existing) {
-      changes.push({
-        change_type: "add",
-        site_id: siteId,
-        slot_natural_key: nk,
-        target_slot_id: null,
-        old_payload: null,
-        new_payload: payload,
-      });
-    } else if (payloadsDiffer(existing.payload, payload)) {
-      changes.push({
-        change_type: "modify",
-        site_id: siteId,
-        slot_natural_key: nk,
-        target_slot_id: existing.slot_id,
-        old_payload: existing.payload,
-        new_payload: payload,
-      });
-    } else {
-      unchanged++;
-    }
-  }
-  for (const [nk, { slot_id, payload }] of existingMap) {
-    if (!proposed.has(nk)) {
-      // Only emit removes for sites that ARE in this upload — otherwise we'd
-      // wipe out slots for sites the user didn't touch.
-      const sid = nk.split("|")[0];
-      if (siteIds.has(sid)) {
-        changes.push({
-          change_type: "remove",
-          site_id: sid,
-          slot_natural_key: nk,
-          target_slot_id: slot_id,
-          old_payload: payload,
-          new_payload: null,
-        });
-      }
-    }
-  }
-
-  return { rowsParsed, sitesCreated, unchanged, changes, errors };
+  return { rowsParsed: proposed.length, sitesCreated, sitesUpdated, unchanged: 0, changes, errors };
 }

@@ -1,0 +1,5 @@
+JobNumber,JobDescription,JobState,Dept,TimeZoneName,StartTime,EndTime,Sun,Mon,Tues,Wed,Thur,Fri,Sat,Lunch,SunTotal,MonTotal,TuesTotal,WedTotal,ThurTotal,FriTotal,SatTotal,TotalHours,HoursTypeDescription
+KOH0344,Kohls # 0344 - Westminster CO,CO,3003 - West,US/Mountain,08:00:00,16:30:00,1,,,,,,1,0.5,8,0,0,0,0,0,8,16,Labor Direct - CO
+KOH0344,Kohls # 0344 - Westminster CO,CO,3003 - West,US/Mountain,07:00:00,14:30:00,,1,1,1,,,,0.5,0,7,7,7,0,0,0,21,Labor Direct - CO
+KOH0345,Kohls # 0345 - Thornton,CO,3003 - West,US/Mountain,08:00:00,16:30:00,1,,,,,,1,0.5,8,0,0,0,0,0,8,16,Labor Direct - CO
+H2101,Home Depot # 2101 Waterloo,IA,4001 - Midwest,US/Central,05:00:00,10:00:00,1,1,1,1,1,1,1,0.0,5,5,5,5,5,5,5,30,Labor Direct - IA

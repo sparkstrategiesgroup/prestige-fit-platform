@@ -18,7 +18,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.master-schedule-import]
-verify_jwt = true
+verify_jwt = false  # web app uploads the file without a Supabase JWT; matches the live deploy. TODO: require auth and send the client JWT.
 
 [functions.master-schedule-apply]
 verify_jwt = true
