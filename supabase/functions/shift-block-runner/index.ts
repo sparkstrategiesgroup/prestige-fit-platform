@@ -170,7 +170,16 @@ async function runOne(
   }
 
   const { error: insErr } = await supabase.from("notifications").insert(rows);
-  if (insErr) throw new Error(`notifications insert failed: ${insErr.message}`);
+  if (insErr) {
+    // idx_notifications_dedup makes (employee, block, type, language, day) unique
+    // for new rows, so a cron double-fire re-inserts an identical batch that
+    // fails atomically with 23505 -- treat that as an already-sent no-op rather
+    // than a hard error (prevents duplicate SMS).
+    if (insErr.code === "23505") {
+      return { recipients: recipients.length, notifications: 0 };
+    }
+    throw new Error(`notifications insert failed: ${insErr.message}`);
+  }
 
   return { recipients: recipients.length, notifications: rows.length };
 }
@@ -196,7 +205,7 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch { /* cron path */ }
 
   const targets: { id: number; kind: Kind }[] = [];
-  if (body.shift_block_id) {
+  if (body.shift_block_id != null) {
     const kinds: Kind[] = body.kind ? [body.kind] : ["warning", "clocked_out"];
     for (const k of kinds) targets.push({ id: body.shift_block_id, kind: k });
   } else {

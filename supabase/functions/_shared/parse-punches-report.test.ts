@@ -6,7 +6,7 @@
 // fn_pick_shift_block via `AT TIME ZONE`, so they must be the correct UTC
 // instant. wallClockToUtcIso performs that conversion using the site timezone.
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { wallClockToUtcIso } from "./parse-punches-report.ts";
+import { parseHoursToDecimal, wallClockToUtcIso } from "./parse-punches-report.ts";
 
 Deno.test("Central, summer (CDT, UTC-5): 2:30pm -> 19:30Z", () => {
   assertEquals(
@@ -48,4 +48,30 @@ Deno.test("midnight maps to the correct instant (no '24' artifact)", () => {
     wallClockToUtcIso(2026, 6, 22, 0, 0, 0, "America/Chicago"),
     "2026-06-22T05:00:00.000Z",
   );
+});
+
+Deno.test("parseHoursToDecimal: '0:00' -> 0 (not null)", () => {
+  assertEquals(parseHoursToDecimal("0:00"), 0);
+});
+
+Deno.test("parseHoursToDecimal: numeric 0 -> 0 (not dropped to null)", () => {
+  assertEquals(parseHoursToDecimal(0), 0);
+});
+
+Deno.test("parseHoursToDecimal: '8:30' -> 8.5", () => {
+  assertEquals(parseHoursToDecimal("8:30"), 8.5);
+});
+
+Deno.test("parseHoursToDecimal: numeric 7.5 passes through", () => {
+  assertEquals(parseHoursToDecimal(7.5), 7.5);
+});
+
+Deno.test("parseHoursToDecimal: empty / null -> null", () => {
+  assertEquals(parseHoursToDecimal(""), null);
+  assertEquals(parseHoursToDecimal(null), null);
+  assertEquals(parseHoursToDecimal(undefined), null);
+});
+
+Deno.test("parseHoursToDecimal: garbage -> null", () => {
+  assertEquals(parseHoursToDecimal("n/a"), null);
 });

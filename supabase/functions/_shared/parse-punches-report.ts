@@ -79,10 +79,15 @@ function parseEpayDate(raw: unknown): string | null {
   return m ? `${m[3]}-${m[1]}-${m[2]}` : null;
 }
 
-function parseHoursToDecimal(raw: unknown): number | null {
-  if (!raw) return null;
+export function parseHoursToDecimal(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  // A numeric cell is already decimal hours -- return it directly so a genuine
+  // 0 (zero-hour punch) is stored as 0.00 instead of being dropped to null by a
+  // truthiness check.
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
   const m = String(raw).trim().match(/^(\d+):(\d{2})$/);
-  return m ? parseFloat(m[1]) + parseInt(m[2], 10) / 60 : null;
+  if (!m) return null;
+  return parseFloat(m[1]) + parseInt(m[2], 10) / 60;
 }
 
 function chainForSiteId(code: string): string | null {
