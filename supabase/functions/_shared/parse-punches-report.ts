@@ -25,15 +25,50 @@ export type IngestResult = {
   missingHeaders?: string[];
 };
 
-function parseEpayDateTime(raw: unknown): string | null {
+// ePay punch times are the store's *local wall-clock* (the export carries no
+// timezone). time_in/time_out are timestamptz and fn_pick_shift_block reads them
+// back with `AT TIME ZONE`, so they must be stored as the correct UTC instant.
+// Convert the wall-clock to UTC using the site's IANA timezone instead of naively
+// tagging it "Z" -- tagging local time as Z stored e.g. a 5:00am Central punch as
+// 5:00am UTC (= midnight Central), shifting it earlier by the site's offset and
+// breaking shift-block matching.
+export function wallClockToUtcIso(
+  y: number, mo: number, d: number, h: number, mi: number, s: number,
+  timeZone: string,
+): string {
+  const asUtc = Date.UTC(y, mo - 1, d, h, mi, s);
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const p: Record<string, string> = {};
+  for (const part of dtf.formatToParts(new Date(asUtc))) p[part.type] = part.value;
+  // Intl can emit "24" for midnight in some runtimes; normalise to 0.
+  const hh = p.hour === "24" ? 0 : Number(p.hour);
+  const tzAsUtc = Date.UTC(
+    Number(p.year), Number(p.month) - 1, Number(p.day), hh, Number(p.minute), Number(p.second),
+  );
+  // offset = tzAsUtc - asUtc; the correct instant is asUtc - offset.
+  return new Date(asUtc - (tzAsUtc - asUtc)).toISOString();
+}
+
+function parseEpayDateTime(raw: unknown, timeZone: string): string | null {
   if (raw === null || raw === undefined || raw === "") return null;
+  const tz = timeZone || "America/Chicago";
   if (typeof raw === "number") {
-    return new Date(Math.round((raw - 25569) * 86400 * 1000)).toISOString();
+    // Excel serial: a naive wall-clock with no zone. Read its components back
+    // out (as UTC, the frame we projected them into) then convert via the tz.
+    const naive = new Date(Math.round((raw - 25569) * 86400 * 1000));
+    return wallClockToUtcIso(
+      naive.getUTCFullYear(), naive.getUTCMonth() + 1, naive.getUTCDate(),
+      naive.getUTCHours(), naive.getUTCMinutes(), naive.getUTCSeconds(), tz,
+    );
   }
   const m = String(raw).trim().match(/^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?$/);
   if (!m) return null;
   const [, mm, dd, yyyy, hh, mi] = m;
-  return `${yyyy}-${mm}-${dd}T${hh ?? "00"}:${mi ?? "00"}:00Z`;
+  return wallClockToUtcIso(Number(yyyy), Number(mm), Number(dd), Number(hh ?? "0"), Number(mi ?? "0"), 0, tz);
 }
 
 function parseEpayDate(raw: unknown): string | null {
@@ -150,8 +185,8 @@ export async function ingestWorkbookBytes(
     }
 
     const workDate = parseEpayDate(row[idx["Date"]]);
-    const timeIn = parseEpayDateTime(row[idx["Time In"]]);
-    const timeOut = parseEpayDateTime(row[idx["Time Out"]]);
+    const timeIn = parseEpayDateTime(row[idx["Time In"]], site.time_zone);
+    const timeOut = parseEpayDateTime(row[idx["Time Out"]], site.time_zone);
     if (!workDate || !timeIn) {
       errors.push({ row: r + 1, message: "Date or Time In could not be parsed" });
       continue;
