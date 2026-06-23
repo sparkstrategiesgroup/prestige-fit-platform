@@ -32,23 +32,34 @@ HARDLINES ~98%). The remainder are sites with no schedule rows at all.
 
 ## Ongoing sync (committed)
 
-`fn_sync_shift_blocks_from_schedule()` (migration
-`20260623030000_sync_shift_blocks_from_schedule.sql`) idempotently rebuilds the matcher
-inputs from `schedule_slot`:
+**`fn_sync_shift_blocks_from_schedule()`** (migrations `20260623030000_…` and
+`20260623040000_…`) idempotently rebuilds the matcher inputs from `schedule_slot`:
 
 1. ensure an **active** `shift_block` exists for every `(end_time, time_zone)` in the
    report (reusing existing blocks; day/client coverage unioned from the report; non-CT
    zones get a label suffix `(MT)` / `(ET)` so `shift_blocks.label` stays unique),
-2. **upsert** one `job_site_schedules` row per `(site, block)` (per-shift hours and
-   headcount aggregated; overnight shifts handled), and
+2. **upsert** one `job_site_schedules` row per `(site, block)` — scheduled start
+   (`scheduled_in_local`), end, per-shift hours and headcount, and
 3. **deactivate** `job_site_schedules` rows that no longer match any `schedule_slot`.
 
-`master-schedule-apply` calls this RPC after each approved revision, so every Schedule
-Report approval refreshes blocks + `job_site_schedules` automatically.
+A **deferred constraint trigger** on `schedule_slot` (`trg_schedule_slot_sync`) runs the
+sync once per transaction, at commit. This covers **every** writer — the bulk
+`master-schedule-apply` loop *and* the manual shift-change form's direct insert — so the
+matcher inputs always reflect the latest schedule. The sync is wrapped so a failure warns
+rather than rolling back the `schedule_slot` write that triggered it.
 
-> Note: the **manual shift-change** path writes `schedule_slot` directly from the
-> frontend and does not yet call the sync. Wiring it there (or a statement-level trigger
-> on `schedule_slot`) is a sensible follow-up.
+### The matcher (`fn_pick_shift_block`, migration `20260623040000_…`)
+
+Given a punch's clock-in, it picks the site's shift block by, in order of preference:
+
+1. the shift whose **end** is at/after the clock-in (nearest) — the dominant case, since
+   ~40% of punches clock in *before* the scheduled start (early-morning cleaning);
+2. an **overnight** shift (`end < start`) currently in progress (clock-in at/after start),
+   which ends the next morning;
+3. a shift that ended **within 60 min** before the clock-in (slight overrun).
+
+If none qualify it returns **NULL** rather than assigning an arbitrary block — e.g. a
+10 pm punch at a site that only runs 05:00–10:00 has no real shift and is left unmatched.
 
 ## One-time historical backfill (run directly on prod 2026-06-23)
 
@@ -75,29 +86,58 @@ re-matched once, in this order:
    `COALESCE(new, old)` re-matches covered sites authoritatively while preserving the
    existing block for the few uncovered-but-already-matched rows.
 
-### Result
+### Result of the initial backfill
 
 Match rate **24% → 99.5%** (11,650 / 11,706). 11,013 rows changed (8,848 filled,
-2,165 corrected off the stale retail blocks). 56 remain unmatched (sites with no
-schedule). Of matched rows, ~95.9% are "clean" (clock-in before the assigned shift-end);
-~4.1% (483) are "nearest" fallbacks — late-night / overnight punches where clock-in is
-after all of the site's shift-ends.
+2,165 corrected off the stale retail blocks). Of matched rows, ~95.9% were "clean"
+(clock-in before the assigned shift-end); ~4.1% were "nearest" fallbacks.
+
+## Matcher-refinement backfill (run directly on prod 2026-06-23)
+
+After `fn_pick_shift_block` was upgraded (overnight-aware; NULL instead of a nonsensical
+nearest match), historical rows were re-matched once more (snapshot
+`lct_backup.lct_block_20260623_v2`):
+
+```sql
+UPDATE public.labor_control_tracking lct
+SET shift_block_id = CASE
+      WHEN EXISTS (SELECT 1 FROM public.job_site_schedules j
+                   WHERE j.job_site_id = lct.job_site_id AND j.active)
+        THEN public.fn_pick_shift_block(lct.job_site_id, lct.time_in)   -- authoritative
+        ELSE COALESCE(public.fn_pick_shift_block(lct.job_site_id, lct.time_in),
+                      lct.shift_block_id)                               -- keep legacy if unscheduled
+    END
+WHERE ...;  -- only rows where the value changes
+```
+
+363 rows changed: **2** overnight punches corrected (e.g. a 21:00 clock-in at a
+17:00–01:30 site moved from "3:30 PM" to "1:30 AM"), **361** anomalous night punches set
+to NULL. The dominant ~95.9% were untouched (verified by dry-run before applying).
+
+### Result (current)
+
+Match rate **96.6%** (11,768 / 12,187, including ~480 punches imported since the first
+backfill that auto-matched on import). The unmatched are anomalous punches with no
+scheduled shift; ~89 legacy matches at unscheduled sites are preserved as-is.
 
 ### Rollback
 
 ```sql
+-- most recent state (after matcher refinement):
 UPDATE public.labor_control_tracking lct
 SET shift_block_id = b.shift_block_id
-FROM lct_backup.lct_block_20260623 b
+FROM lct_backup.lct_block_20260623_v2 b
 WHERE b.id = lct.id;
--- shift_blocks / job_site_schedules can likewise be restored from lct_backup.*_20260623
+-- pre-everything state is in lct_backup.lct_block_20260623;
+-- shift_blocks / job_site_schedules in lct_backup.*_20260623
 ```
 
 Drop the `lct_backup` schema once the new behavior is confirmed in production.
 
-## Known follow-up
+## Notes
 
-`fn_pick_shift_block` compares clock-in **time-of-day** to shift-**end** time-of-day,
-which mis-handles overnight shifts and punches clocked in after all ends (the ~4.1%
-fallback above). Revisiting that matcher to consider shift start/end windows (and
-overnight wrap) would tighten those cases.
+- The ~480 anomalous night punches now left unmatched are worth investigating upstream
+  (possible clock-out-recorded-as-clock-in, or genuinely off-schedule work) — but they
+  correspond to no scheduled shift, so leaving them unmatched is correct.
+- `fn_pick_shift_block`'s 60-minute overrun grace is a heuristic; adjust if real shifts
+  routinely run past their scheduled end by more than that.
