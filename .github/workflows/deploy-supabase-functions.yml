@@ -1,0 +1,111 @@
+name: Deploy Supabase Edge Functions
+
+# Deploys Edge Functions to the production Supabase project on merge to main.
+# Edge Functions are NOT auto-deployed by Supabase, so without this they have to
+# be deployed by hand (Dashboard paste or `supabase functions deploy`). This runs
+# `supabase functions deploy` for you.
+#
+# Scope: by default only the function directories that changed in the push are
+# deployed. If shared code (`supabase/functions/_shared/**`) or `config.toml`
+# changes — which can affect several functions — all functions are deployed.
+# `verify_jwt` posture is taken from `supabase/config.toml`, so it is preserved.
+#
+# Requires one repository secret: SUPABASE_ACCESS_TOKEN
+#   Supabase Dashboard → Account → Access Tokens → generate, then
+#   GitHub repo → Settings → Secrets and variables → Actions → New secret.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'supabase/config.toml'
+      - '.github/workflows/deploy-supabase-functions.yml'
+  workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: 'Deploy ALL functions (ignore change detection)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-supabase-functions
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      PROJECT_REF: sshhcpzleurztzksrlvr
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Determine which functions to deploy
+        id: plan
+        run: |
+          set -euo pipefail
+          FN_DIR=supabase/functions
+          list_all() {
+            for d in "$FN_DIR"/*/; do
+              name="$(basename "$d")"
+              [ "$name" = "_shared" ] && continue
+              echo "$name"
+            done
+          }
+          BEFORE='${{ github.event.before }}'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             || [ "${{ github.event.inputs.deploy_all }}" = "true" ] \
+             || [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse --verify -q "${BEFORE}^{commit}" >/dev/null; then
+            echo "Deploying all functions (manual run or no diff base)."
+            FUNCS="$(list_all)"
+          else
+            CHANGED="$(git diff --name-only "$BEFORE" '${{ github.sha }}' -- "$FN_DIR" supabase/config.toml || true)"
+            if echo "$CHANGED" | grep -qE "^$FN_DIR/_shared/|^supabase/config\.toml$"; then
+              echo "Shared code or config.toml changed -> deploying all functions."
+              FUNCS="$(list_all)"
+            else
+              FUNCS="$(echo "$CHANGED" | sed -nE "s#^$FN_DIR/([^/]+)/.*#\1#p" | sort -u)"
+            fi
+          fi
+          FUNCS="$(printf '%s\n' "$FUNCS" | sed '/^[[:space:]]*$/d' | sort -u)"
+          if [ -z "$FUNCS" ]; then
+            echo "No function changes detected; nothing to deploy."
+          else
+            echo "Planned functions:"
+            printf '  %s\n' $FUNCS
+          fi
+          {
+            echo 'funcs<<__EOF__'
+            printf '%s\n' "$FUNCS"
+            echo '__EOF__'
+            if [ -z "$FUNCS" ]; then echo 'has=false'; else echo 'has=true'; fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy functions
+        if: ${{ steps.plan.outputs.has == 'true' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_ACCESS_TOKEN}" ]; then
+            echo "::error::SUPABASE_ACCESS_TOKEN secret is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          DEPLOYED=0
+          while IFS= read -r fn; do
+            [ -z "$fn" ] && continue
+            echo "::group::supabase functions deploy $fn"
+            supabase functions deploy "$fn" --project-ref "$PROJECT_REF"
+            echo "::endgroup::"
+            DEPLOYED=$((DEPLOYED + 1))
+          done <<< '${{ steps.plan.outputs.funcs }}'
+          echo "Deployed $DEPLOYED function(s)."
