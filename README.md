@@ -63,7 +63,7 @@ Live schema is ~40 tables across these domains. Field-level detail lives in the 
 | Integration | Direction | Mechanism |
 |---|---|---|
 | ePay labor (Punches) report | Inbound | Email → Power Automate "Epay Email to Supabase Webhook" → `epay-import-email` → `epay-import` |
-| WinTeam Employee List (113) | Inbound | Email (daily 6pm) → Power Automate → `employee-list-import-email` → refreshes `employee` |
+| WinTeam Employee List (113) | Inbound | Email (daily 6pm) → Power Automate → `employee-list-import-email` → refreshes `employee` (flow setup: [docs/powerautomate-employee-list-113.md](docs/powerautomate-employee-list-113.md)) |
 | Master schedule | Inbound | `master-schedule-import` (file) → operator approves → `master-schedule-apply` |
 | WinTeam — Schedule report | Inbound (manual) | Periodic manual export from WinTeam |
 | WinTeam — Employee master list | Inbound (manual) | Periodic manual export from WinTeam |
