@@ -129,14 +129,23 @@ every parsed file in `public.employee_list_imports`.
 
 ## Allowlist
 
-`kneff@sparkstrategiesgroup.com` is seeded by migration
-`20260624000000_employee_list_ingestion.sql`. To allow another forwarder:
+**For now** the allowed sender is `kneff@sparkstrategiesgroup.com` (the test
+forward), seeded by migration `20260624000000_employee_list_ingestion.sql`.
+`fit@prestigeusa.net` is intentionally **not** allowlisted yet.
+
+**Transition to production (`fit@prestigeusa.net`)** once testing is done:
 
 ```sql
 INSERT INTO public.email_allowed_senders (email, notes)
-VALUES ('someone@example.com', 'why')
+VALUES ('fit@prestigeusa.net', 'WinTeam Employee List (113) — production sender')
 ON CONFLICT (email) DO NOTHING;
+
+-- optionally retire the test forwarder once fit@ is verified:
+UPDATE public.email_allowed_senders SET active = FALSE
+WHERE email = 'kneff@sparkstrategiesgroup.com';
 ```
+
+To allow any other forwarder, use the same `INSERT ... ON CONFLICT DO NOTHING`.
 
 ## Prerequisite
 

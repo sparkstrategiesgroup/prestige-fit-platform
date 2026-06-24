@@ -58,6 +58,19 @@ ALTER TABLE public.email_imports
 -- Allow the daily forwarder. The allowlist is shared across both email
 -- webhooks; routing to the correct parser is by endpoint (Power Automate POSTs
 -- 113_* files to employee-list-import-email), per the file-prefix convention.
+--
+-- FOR NOW the sender is the K forward (kneff@sparkstrategiesgroup.com) while the
+-- flow is being tested. The eventual production sender is fit@prestigeusa.net.
+-- DO NOT seed fit@prestigeusa.net yet — when ready to cut over, run the
+-- transition block at the bottom of this comment (kept commented so the cutover
+-- is a deliberate, dated action rather than an accidental early activation):
+--
+--   INSERT INTO public.email_allowed_senders (email, notes) VALUES
+--       ('fit@prestigeusa.net', 'WinTeam Employee List (113) — production sender')
+--   ON CONFLICT (email) DO NOTHING;
+--   -- optionally retire the test forwarder once fit@ is verified:
+--   UPDATE public.email_allowed_senders SET active = FALSE
+--       WHERE email = 'kneff@sparkstrategiesgroup.com';
 INSERT INTO public.email_allowed_senders (email, notes) VALUES
-    ('kneff@sparkstrategiesgroup.com', 'Daily WinTeam Employee List (113) forward, 6:00pm ET')
+    ('kneff@sparkstrategiesgroup.com', 'Daily WinTeam Employee List (113) forward, 6:00pm ET — TEST sender; transition to fit@prestigeusa.net later')
 ON CONFLICT (email) DO NOTHING;
