@@ -48,9 +48,12 @@ sync once per transaction, at commit. This covers **every** writer — the bulk
 matcher inputs always reflect the latest schedule. The sync is wrapped so a failure warns
 rather than rolling back the `schedule_slot` write that triggered it.
 
-### The matcher (`fn_pick_shift_block`, migration `20260623040000_…`)
+### The matcher (`fn_pick_shift_block`, migrations `20260623040000_…` & `…050000_…`)
 
-Given a punch's clock-in, it picks the site's shift block by, in order of preference:
+It first restricts to the site's blocks **active on the punch's local weekday**
+(`job_site_schedules.days_of_week`, an OR-union of the slots' days; an all-false/NULL
+mask is treated as every-day so missing data never drops all matches). Among those it
+picks, in order of preference:
 
 1. the shift whose **end** is at/after the clock-in (nearest) — the dominant case, since
    ~40% of punches clock in *before* the scheduled start (early-morning cleaning);
@@ -60,6 +63,12 @@ Given a punch's clock-in, it picks the site's shift block by, in order of prefer
 
 If none qualify it returns **NULL** rather than assigning an arbitrary block — e.g. a
 10 pm punch at a site that only runs 05:00–10:00 has no real shift and is left unmatched.
+
+Why day-of-week matters: many sites end at different times on different weekdays
+(e.g. 13:00 Wed but 12:00 other days). Without the weekday filter the matcher chose the
+nearest end across *all* days and mis-assigned ~26% of punches at such sites — which also
+made the runner's send-list disagree with the Daily Control preview. The weekday filter
+corrects both.
 
 ## One-time historical backfill (run directly on prod 2026-06-23)
 
@@ -114,30 +123,46 @@ WHERE ...;  -- only rows where the value changes
 17:00–01:30 site moved from "3:30 PM" to "1:30 AM"), **361** anomalous night punches set
 to NULL. The dominant ~95.9% were untouched (verified by dry-run before applying).
 
+## Day-of-week backfill (run directly on prod 2026-06-23)
+
+`job_site_schedules` then gained `days_of_week` and `fn_pick_shift_block` became
+weekday-aware (migration `20260623050000_…`). Historical rows were re-matched once more
+(snapshot `lct_backup.lct_block_20260623_v3`, same CASE rule as above). **3,443 rows
+changed: 3,277 reassigned to the correct weekday block, 166 set to NULL (genuinely
+off-schedule that weekday).** 9,304 unchanged; verified by a per-weekday dry-run and a
+sample check before applying (zero spurious matches).
+
 ### Result (current)
 
-Match rate **96.6%** (11,768 / 12,187, including ~480 punches imported since the first
-backfill that auto-matched on import). The unmatched are anomalous punches with no
-scheduled shift; ~89 legacy matches at unscheduled sites are preserved as-is.
+Match rate **95.2%** (~12,144 / 12,755). Remaining unmatched are punches with no shift
+scheduled that weekday (off-schedule / anomalous); legacy matches at unscheduled sites are
+preserved. This also collapsed the send-list-vs-preview divergence: for block 5 today,
+"texted but absent from the preview" went from **25 → 0**; the only residual gap is the
+store-exception check still missing from `fn_eligible` (see below).
 
 ### Rollback
 
 ```sql
--- most recent state (after matcher refinement):
+-- most recent state (after the day-of-week backfill):
 UPDATE public.labor_control_tracking lct
 SET shift_block_id = b.shift_block_id
-FROM lct_backup.lct_block_20260623_v2 b
+FROM lct_backup.lct_block_20260623_v3 b
 WHERE b.id = lct.id;
--- pre-everything state is in lct_backup.lct_block_20260623;
+-- earlier snapshots: ..._v2 (after overnight refinement), ..._20260623 (pre-everything);
 -- shift_blocks / job_site_schedules in lct_backup.*_20260623
 ```
 
 Drop the `lct_backup` schema once the new behavior is confirmed in production.
 
-## Notes
+## Open items
 
-- The ~480 anomalous night punches now left unmatched are worth investigating upstream
-  (possible clock-out-recorded-as-clock-in, or genuinely off-schedule work) — but they
-  correspond to no scheduled shift, so leaving them unmatched is correct.
+- **`fn_eligible_for_shift_block` vs `fn_candidates_for_shift_block`.** The runner's
+  send-list and the Daily Control preview now agree except that `fn_eligible` does **not**
+  honor `store_exception` (it would text people at a short-staffed store the operator
+  excluded). Fix is unambiguous; pending alongside the product decision on whether texting
+  is schedule-driven or punch-driven (now nearly moot since both are weekday-aware).
+- The anomalous punches left unmatched are worth investigating upstream (possible
+  clock-out-recorded-as-clock-in, or genuinely off-schedule work) — but they correspond to
+  no scheduled shift, so leaving them unmatched is correct.
 - `fn_pick_shift_block`'s 60-minute overrun grace is a heuristic; adjust if real shifts
   routinely run past their scheduled end by more than that.
