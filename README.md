@@ -28,6 +28,7 @@ prestige-fit-platform/
 │   ├── functions/                    Edge Functions (Deno)
 │   │   ├── epay-import-email/        Power Automate webhook (ePay emails)
 │   │   ├── epay-import/              Parses ePay XLSX → labor_control_tracking
+│   │   ├── employee-list-import-email/ Power Automate webhook (WinTeam 113) → refreshes employee
 │   │   ├── awr-import/               Loads AWR XLSX (legacy/unclassified — see spec §4.4)
 │   │   ├── master-schedule-import/   Parses schedule XLSX into a pending revision
 │   │   ├── master-schedule-apply/    Applies an approved schedule revision
@@ -62,6 +63,7 @@ Live schema is ~40 tables across these domains. Field-level detail lives in the 
 | Integration | Direction | Mechanism |
 |---|---|---|
 | ePay labor (Punches) report | Inbound | Email → Power Automate "Epay Email to Supabase Webhook" → `epay-import-email` → `epay-import` |
+| WinTeam Employee List (113) | Inbound | Email (daily 6pm) → Power Automate → `employee-list-import-email` → refreshes `employee` (flow setup: [docs/powerautomate-employee-list-113.md](docs/powerautomate-employee-list-113.md)) |
 | Master schedule | Inbound | `master-schedule-import` (file) → operator approves → `master-schedule-apply` |
 | WinTeam — Schedule report | Inbound (manual) | Periodic manual export from WinTeam |
 | WinTeam — Employee master list | Inbound (manual) | Periodic manual export from WinTeam |
@@ -85,6 +87,8 @@ inbound automation which report a file is, so files can be routed by that prefix
 | Schedule Report (Master Schedule List) | `SCHEDULE REPORT91` | `SCHEDULE REPORT91_20260615_0600.csv` | Manual / periodic |
 
 **Employee List (`113`)** columns: `EmployeeID, FirstName, LastName, Phone1, Phone2, PrimaryJob, PrimaryJobSite, EEStatus` — maps to the `employee` table (`PrimaryJob` = primary job/site code, `PrimaryJobSite` = site name, `EEStatus` = Active/…). Contains employee PII (names, phone numbers); don't commit sample files.
+
+The `113` file is forwarded daily (6pm ET) into the FIT intake mailbox and POSTed by Power Automate to `employee-list-import-email`, which **refreshes the matching `employee` row** (by `employee_number`): `FirstName`, `LastName`, `Phone1` → `cell_phone`, `Phone2` → `phone_2`, `EEStatus` → `status`, and `PrimaryJob` → `primary_job_id` (only when it resolves to an existing `site`). It is **update-only** — an `EmployeeID` with no `employee` row is *not* inserted (the report carries no `region`/`department`, both NOT NULL), so unmatched IDs are logged in `employee_list_imports.errors` for manual onboarding. Each import is audited in `employee_list_imports` (+ the email wrapper in `email_imports`), and Power Automate routes by the `113_` file-name prefix so this flow stays separate from the ePay punches flow.
 
 ## Setup
 

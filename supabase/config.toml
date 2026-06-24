@@ -8,6 +8,9 @@ project_id = "sshhcpzleurztzksrlvr"
 [functions.epay-import-email]
 verify_jwt = false  # Power Automate webhook; uses x-fit-shared-secret
 
+[functions.employee-list-import-email]
+verify_jwt = false  # Power Automate webhook; uses x-fit-shared-secret
+
 [functions.notify-summary-email]
 verify_jwt = false  # Power Automate webhook; uses x-fit-shared-secret
 
